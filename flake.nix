@@ -7,12 +7,17 @@
       jms = final.callPackage ({stdenv, pkgs, ...}:
         stdenv.mkDerivation {
           src = ./.;
-          pname = "yourprogram";
+          pname = "jms";
           version = "unstable";
           buildInputs = with pkgs; [
-          gnumake
-          gcc
+            gnumake
+            gcc
           ];
+
+          installPhase = ''
+          mkdir -p $out/bin/
+          cp jms_coord $out/bin/jms_coord
+          '';
         }
       ) {};
     };
