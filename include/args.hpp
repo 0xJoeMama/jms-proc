@@ -242,7 +242,6 @@ public:
 
 /*
  * Wrapper for named arguments (flags starting with --).
- * TODO: handle short style flags (with -<smth> instead of --<long version of smth>)
  */
 template <typename T, typename Desc> class NamedArg {
   T deleg;
@@ -254,9 +253,9 @@ public:
   constexpr NamedArg(Args... args) : deleg(args...) {}
 
   /* Parse the name of the argument. */
-  static void parse_name(Argv &argv) {
+  static void parse_long_name(Argv &argv) {
     if (std::strncmp(*argv, "--", 2) != 0)
-      throw error::NonParsable("expected arguments to start with '--");
+      throw error::NonParsable("expected arguments to start with '--'");
 
     if (std::strcmp(*argv + 2, Desc::name) != 0)
       throw error::NonParsable(std::string("Invalid name. Expected '") +
@@ -266,12 +265,36 @@ public:
     ++argv;
   }
 
+  static void parse_short_name(Argv &argv) {
+    std::string_view name = *argv;
+
+    if (name.size() != 2)
+      return parse_long_name(argv);
+
+    if (name[0] != '-')
+      throw error::NonParsable("expected short to start with '-'");
+
+    if (name[1] != Desc::shortname)
+      return parse_long_name(argv);
+
+    ++argv;
+  }
+
+  template <typename C>
+  static std::true_type has_shortname(decltype(&C::shortname));
+  template <typename C> static std::false_type has_shortname(...);
+
   /* Parse the named argument. */
   inline void parse(Argv &argv) {
     if (!*argv)
       return;
 
-    parse_name(argv);
+    if constexpr (decltype(has_shortname<Desc>(nullptr))()) {
+      parse_short_name(argv);
+    } else {
+      parse_long_name(argv);
+    }
+
     try {
       deleg.parse(argv);
     } catch (const error::NonParsable &e) {
