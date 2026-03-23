@@ -34,7 +34,6 @@ int main(int argc, const char **argv) {
   } catch (const error::ParsingException &e) {
     std::cerr << "ERROR: failed to parse command line arguments: " << e.what() << "\n";
     coords.print_usage(argv[0], std::cerr);
-    std::cerr << std::endl;
 
     return 1;
   }

@@ -1,0 +1,35 @@
+{
+  description = "Job Management System";
+  inputs.flake-utils.url = "github:numtide/flake-utils";
+  
+  outputs = { self, nixpkgs, flake-utils }: {
+    overlays.default = final: prev: {
+      jms = final.callPackage ({stdenv, pkgs, ...}:
+        stdenv.mkDerivation {
+          src = ./.;
+          pname = "yourprogram";
+          version = "unstable";
+          buildInputs = with pkgs; [
+          gnumake
+          gcc
+          ];
+        }
+      ) {};
+    };
+  } // # We now add the package defined in the above overlay for all architectures
+  (flake-utils.lib.eachDefaultSystem (system:
+    let
+      pkgs = import nixpkgs {
+        system = system;
+        overlays = [ self.overlays.default ];
+      };
+    in
+      {
+        # Create a new package
+        packages = {
+          jms = pkgs.jms;
+          default = self.packages.${system}.jms;
+        };
+      }
+  ));
+}
