@@ -1,4 +1,5 @@
 jms_coord
+pool_tests
 *.o
 
 .cache
