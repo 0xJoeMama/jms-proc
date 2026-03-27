@@ -16,6 +16,7 @@ class PosixException : std::exception {
 public:
   PosixException() noexcept : err(errno), err_msg(strerror(err)) {}
   const char *what() const noexcept override { return err_msg; }
+  int get_errno() const { return err; }
 };
 
 class NoCommandException : std::exception {

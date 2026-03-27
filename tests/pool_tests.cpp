@@ -1,3 +1,4 @@
+#include <cassert>
 #include <iostream>
 #include <sstream>
 #include <sys/wait.h>
@@ -5,11 +6,13 @@
 #include "except.h"
 #include "pool.h"
 
+#define NPROC 200
+
 int main(void) {
-  JobPool pool(12);
+  JobPool pool(NPROC);
   try {
     const Proc *last;
-    for (int i = 0; i < 12; i++) {
+    for (int i = 0; i < NPROC; i++) {
       std::ostringstream ss{};
       ss << i;
 
@@ -17,12 +20,12 @@ int main(void) {
     }
 
     auto res = pool.get_by_pid(last->get_pid());
-    sleep(2);
-    if (res) {
-      std::cout << "Status is: " << (*res)->get_status() << std::endl;
-    } else {
-      throw "failed to find proc";
-    }
+    assert(res && res.value()->get_status() == JobStatus::Running);
+
+    pool.wait_all();
+
+    res = pool.get_by_pid(last->get_pid());
+    assert(res && res.value()->get_status() == JobStatus::Finished);
   } catch (const PosixException &pe) {
     std::cerr << pe.what() << std::endl;
     throw pe;

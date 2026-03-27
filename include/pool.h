@@ -1,13 +1,12 @@
 #pragma once
 
-#include <cstddef>
 #include <optional>
-#include <ostream>
 #include <stdexcept>
 #include <string>
-#include <sys/types.h>
 #include <unordered_map>
 #include <vector>
+
+#include "pipe.h"
 
 enum class JobStatus {
   Running,
@@ -37,6 +36,8 @@ class JobPool {
 
   static JobPool *any_pool;
 
+  pipes::Pipe finished;
+
 public:
   JobPool(size_t n);
   JobPool(const JobPool &) = delete;
@@ -52,6 +53,6 @@ public:
   }
 
   void wait_all();
-
+  void recv_sigchld();
   static JobPool *get_pool() { return any_pool; }
 };
