@@ -1,6 +1,11 @@
 #include <args.hpp>
 #include <iostream>
 
+#include "except.hpp"
+#include "file_store.hpp"
+#include "pipe.hpp"
+#include "util.hpp"
+
 struct RunPath : RequiredArg<StringArg, RunPath> {
   static constexpr const char *name = "run-path";
   static constexpr const char shortname = 'l';
@@ -13,27 +18,44 @@ struct JobsPerPool : RequiredArg<IntArg, JobsPerPool> {
   static constexpr const char *desc = "Number of jobs per job pool";
 };
 
-struct JmsCoord : Command<JmsCoord, Field<RunPath>, Field<JobsPerPool>> {
+struct JmsCoordConfig
+    : Command<JmsCoordConfig, Field<RunPath>, Field<JobsPerPool>> {
   static constexpr const char *desc = "Job Management System Coordinator";
-  static constexpr const char *signature = "-l <run-directory> -n <jobs-per-pool>";
+  static constexpr const char *signature =
+      "-l <run-directory> -n <jobs-per-pool>";
   static constexpr const char *example = "-l . -n 12";
 };
 
-int main(int argc, const char **argv) {
-  (void) argc;
-  JmsCoord coords{};
+class JmsCoord {
+  const JmsCoordConfig config;
+  const store::FileStore store;
+  const pipes::ReadEnd jms_in;
+
+public:
+  JmsCoord(JmsCoordConfig &&config)
+      : config(std::move(config)), store(this->config.get<RunPath>()),
+        jms_in(pipes::ReadEnd(store.create_fifo(config::JMS_IN))) {}
+};
+
+int main(int, const char **argv) {
+  JmsCoordConfig config{};
 
   try {
     Argv args(argv + 1);
-    coords.parse(args);
+    config.parse(args);
+    JmsCoord coord(std::move(config));
 
-    auto s = coords.get<RunPath>();
-    std::cout << "Running directory is " << s << std::endl;
-
+    sleep(10);
     return 0;
   } catch (const error::ParsingException &e) {
-    std::cerr << "ERROR: failed to parse command line arguments: " << e.what() << "\n";
-    coords.print_usage(argv[0], std::cerr);
+    std::cerr << "ERROR: failed to parse command line arguments: " << e.what()
+              << "\n";
+
+    config.print_usage(argv[0], std::cerr);
+
+    return 1;
+  } catch (const PosixException &pe) {
+    std::cerr << "ERROR: " << pe.what() << std::endl;
 
     return 1;
   }

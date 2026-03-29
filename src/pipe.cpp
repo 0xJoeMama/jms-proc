@@ -1,6 +1,7 @@
 #include <cstring>
 #include <fcntl.h>
 #include <iostream>
+#include <sstream>
 #include <unistd.h>
 
 #include "except.hpp"
@@ -13,7 +14,7 @@ size_t read_from_pipe_fd(int fd, void *buf, size_t n) {
   ssize_t res = ::read(fd, buf, n);
 
   if (res < 0)
-    throw PosixException();
+    throw PosixException("failed to read from pipe");
 
   return res;
 }
@@ -22,7 +23,7 @@ size_t write_to_pipe_fd(int fd, const void *buf, size_t n) {
   ssize_t res = ::write(fd, const_cast<void *>(buf), n);
 
   if (res < 0)
-    throw PosixException();
+    throw PosixException("failed to write to pip");
 
   return res;
 }
@@ -49,7 +50,7 @@ int get_pipe_end(int end, int fds[2]) {
 
 Pipe::Pipe() {
   if (pipe2(fds, O_CLOEXEC) < 0)
-    throw PosixException();
+    throw PosixException("could not create unnamed pipe");
 }
 
 size_t Pipe::read(void *buf, size_t n) {
@@ -68,8 +69,12 @@ Pipe::~Pipe() {
 
 Fifo::Fifo(std::string &&path, bool volatil)
     : path(std::move(path)), volatil(volatil) {
-  if (mkfifo(this->path.c_str(), 0644))
-    throw PosixException();
+  if (mkfifo(this->path.c_str(), 0644)) {
+    std::ostringstream os{};
+    os << "could not create named pipe at '" << this->path << "': ";
+
+    throw PosixException(os.str());
+  }
 }
 
 Fifo::~Fifo() noexcept {
@@ -80,6 +85,20 @@ Fifo::~Fifo() noexcept {
 }
 
 ReadEnd::ReadEnd(Pipe &&pipe) : fd(get_pipe_end(Pipe::READ_END, pipe.fds)) {}
+
+ReadEnd::ReadEnd(Fifo &&fifo) {
+  fd = open(fifo.path.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+
+  if (fd < 0) {
+    std::ostringstream os{};
+    os << "could not open read end of named pipe at '" << fifo.path << "': ";
+
+    throw PosixException(os.str());
+  }
+
+  fifo.path.clear();
+}
+
 ReadEnd::~ReadEnd() { close_with_warn(fd); }
 
 size_t ReadEnd::read(void *buf, size_t n) {
@@ -87,6 +106,20 @@ size_t ReadEnd::read(void *buf, size_t n) {
 }
 
 WriteEnd::WriteEnd(Pipe &&pipe) : fd(get_pipe_end(Pipe::WRITE_END, pipe.fds)) {}
+
+WriteEnd::WriteEnd(Fifo &&fifo) {
+  fd = open(fifo.path.c_str(), O_WRONLY | O_NONBLOCK | O_CLOEXEC);
+
+  if (fd < 0) {
+    std::ostringstream os{};
+    os << "could not open write end of named pipe at '" << fifo.path << "': ";
+
+    throw PosixException(os.str());
+  }
+
+  fifo.path.clear();
+}
+
 WriteEnd::~WriteEnd() { close_with_warn(fd); }
 
 size_t WriteEnd::write(const void *buf, size_t n) {

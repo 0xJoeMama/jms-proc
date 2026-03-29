@@ -51,7 +51,7 @@ const Job &JobPool::start_job(std::vector<std::string> &&cmd) {
 
   switch (pid) {
   case -1:
-    throw PosixException();
+    throw PosixException("failed to fork child process: ");
   case 0: {
     const char *path = cmd[0].c_str();
     char **const args = new char *[cmd.size() + 1];
@@ -69,7 +69,7 @@ const Job &JobPool::start_job(std::vector<std::string> &&cmd) {
     }
 
     execvp(path, args);
-    throw PosixException();
+    throw PosixException("failed to exec new program");
   } break;
   default: {
     this->jobs.emplace(pid, Job(pid));
@@ -103,7 +103,7 @@ void JobPool::wait_all() {
     }
 
     if (pid < 0 && errno != ECHILD)
-      throw PosixException();
+      throw PosixException("could not await children: ");
   }
 }
 

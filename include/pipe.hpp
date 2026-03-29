@@ -18,7 +18,11 @@ class Fifo {
 
 public:
   Fifo(std::string &&path, bool volatil = false);
+  Fifo(const Fifo &) = delete;
   ~Fifo() noexcept;
+
+  friend class ReadEnd;
+  friend class WriteEnd;
 };
 
 class Pipe : public io::Read, public io::Write {

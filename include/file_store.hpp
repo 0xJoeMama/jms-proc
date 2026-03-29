@@ -21,10 +21,10 @@ public:
 };
 
 class FileStore {
-  Dir root_dir;
+  const Dir root_dir;
 
 public:
   FileStore(std::string_view root_path);
-  pipes::Fifo create_fifo(std::string_view name);
+  pipes::Fifo create_fifo(std::string_view name) const;
 };
 } // namespace store

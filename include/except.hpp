@@ -3,6 +3,7 @@
 #include <cerrno>
 #include <cstring>
 #include <exception>
+#include <string>
 
 class FullPoolException : std::exception {
 public:
@@ -11,13 +12,18 @@ public:
 
 class PosixException : std::exception {
   int err;
-  const char *err_msg;
+  std::string errmsg;
 
 public:
-  PosixException(int errnum) noexcept
-      : err(errnum), err_msg(strerror(errnum)) {}
-  PosixException() noexcept : PosixException(errno) {}
-  const char *what() const noexcept override { return err_msg; }
+  PosixException(std::string &&errmsg, int errnum)
+      : err(errnum), errmsg(std::move(errmsg)) {
+    this->errmsg += strerror(errnum);
+  }
+
+  PosixException(std::string &&errmsg)
+      : PosixException(std::move(errmsg), errno) {}
+
+  const char *what() const noexcept override { return errmsg.c_str(); }
   int get_errno() const { return err; }
 };
 

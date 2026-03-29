@@ -7,4 +7,6 @@
 
 namespace config {
   constexpr int OPEN_FDS_ON_WALK = 4;
+  constexpr const char *JMS_IN = "jms_in";
+  constexpr const char *JMS_OUT = "jms_out";
 }

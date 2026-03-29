@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <fts.h>
 #include <iostream>
+#include <sstream>
 #include <string_view>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -23,14 +24,14 @@ struct Fts {
     fts = fts_open(roots, FTS_PHYSICAL, nullptr);
 
     if (!fts)
-      throw PosixException();
+      throw PosixException("failed to create file tree traversal handle: ");
   }
 
   FTSENT *operator++(int) {
     FTSENT *res = fts_read(fts);
 
     if (!res && errno)
-      throw PosixException();
+      throw PosixException("failed to get next file tree traversal object: ");
 
     return res;
   }
@@ -56,12 +57,12 @@ DIR *mk_open_dir(const char *path) {
   if (res < 0 && errno == EEXIST)
     throw AlreadyThere();
   else if (res < 0)
-    throw PosixException();
+    throw PosixException("failed to create directory");
 
   dir = opendir(path);
 
   if (!dir)
-    throw PosixException();
+    throw PosixException("failed to open directory");
 
   return dir;
 }
@@ -79,8 +80,13 @@ Dir::Dir(std::string_view root) : root(root) {
     while ((ent = fts++)) {
       switch (ent->fts_info) {
       case FTS_DP:
-        if (rmdir(ent->fts_accpath) < 0)
-          throw PosixException();
+        if (rmdir(ent->fts_accpath) < 0) {
+          std::ostringstream os{};
+          os << "failed to remove directory '" << ent->fts_accpath << '\''
+             << ": ";
+
+          throw PosixException(os.str());
+        }
 
         break;
       case FTS_F:
@@ -88,14 +94,22 @@ Dir::Dir(std::string_view root) : root(root) {
       case FTS_SLNONE:
       case FTS_DEFAULT:
       case FTS_NSOK:
-        if (unlink(ent->fts_accpath) < 0)
-          throw PosixException();
+        if (unlink(ent->fts_accpath) < 0) {
+          std::ostringstream os{};
+          os << "failed to unlink path '" << ent->fts_accpath << '\'' << ": ";
+
+          throw PosixException(os.str());
+        }
 
         break;
       case FTS_DNR:
       case FTS_ERR:
-      case FTS_NS:
-        throw PosixException(ent->fts_errno);
+      case FTS_NS: {
+        std::ostringstream os{};
+        os << "invalid file tree entry '" << ent->fts_accpath << "'" << ": ";
+
+        throw PosixException(os.str());
+      } break;
       default:
         break;
       };
@@ -112,7 +126,7 @@ Dir::~Dir() noexcept {
 
 FileStore::FileStore(std::string_view root_path) : root_dir(root_path) {}
 
-Fifo FileStore::create_fifo(std::string_view subpath) {
+Fifo FileStore::create_fifo(std::string_view subpath) const {
   std::string path = root_dir.get_root_path();
 
   path.push_back('/');
