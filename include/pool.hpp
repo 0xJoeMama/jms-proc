@@ -1,29 +1,32 @@
 #pragma once
 
+#include <chrono>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
-#include "pipe.h"
-
+namespace pool {
 enum class JobStatus {
-  Running,
+  Active,
   Suspended,
   Finished,
 };
 
 std::ostream &operator<<(std::ostream &, JobStatus status);
 
-class Proc {
+namespace chr = std::chrono;
+
+class Job {
   pid_t pid;
   JobStatus status;
+  chr::time_point<chr::steady_clock> last_start;
 
 public:
-  Proc(pid_t pid);
-  Proc(const Proc &) = delete;
-  Proc(Proc &&) = default;
+  Job(pid_t pid);
+  Job(const Job &) = delete;
+  Job(Job &&) = default;
 
   inline pid_t get_pid() const { return pid; }
   JobStatus get_status() const { return status; }
@@ -32,19 +35,15 @@ public:
 
 class JobPool {
   const size_t n;
-  std::unordered_map<pid_t, Proc> jobs;
-
-  static JobPool *any_pool;
-
-  pipes::Pipe finished;
+  std::unordered_map<pid_t, Job> jobs;
 
 public:
   JobPool(size_t n);
   JobPool(const JobPool &) = delete;
 
-  const Proc &start_job(std::vector<std::string> &&cmd);
+  const Job &start_job(std::vector<std::string> &&cmd);
 
-  std::optional<Proc *> get_by_pid(pid_t pid) {
+  std::optional<Job *> get_by_pid(pid_t pid) {
     try {
       return std::make_optional(&this->jobs.at(pid));
     } catch (const std::out_of_range &) {
@@ -53,6 +52,5 @@ public:
   }
 
   void wait_all();
-  void recv_sigchld();
-  static JobPool *get_pool() { return any_pool; }
 };
+} // namespace pool

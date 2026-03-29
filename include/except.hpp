@@ -14,7 +14,9 @@ class PosixException : std::exception {
   const char *err_msg;
 
 public:
-  PosixException() noexcept : err(errno), err_msg(strerror(err)) {}
+  PosixException(int errnum) noexcept
+      : err(errnum), err_msg(strerror(errnum)) {}
+  PosixException() noexcept : PosixException(errno) {}
   const char *what() const noexcept override { return err_msg; }
   int get_errno() const { return err; }
 };

@@ -1,10 +1,10 @@
 #include <cstring>
+#include <fcntl.h>
 #include <iostream>
 #include <unistd.h>
-#include <fcntl.h>
 
-#include "except.h"
-#include "pipe.h"
+#include "except.hpp"
+#include "pipe.hpp"
 
 using namespace pipes;
 
@@ -64,6 +64,19 @@ Pipe::~Pipe() {
   for (size_t i = 0; i < sizeof(fds) / sizeof(int); i++)
     if (fds[i] >= 0 && close(fds[i]) < 0)
       std::cerr << "WARN: failed to close pipe: " << strerror(errno);
+}
+
+Fifo::Fifo(std::string &&path, bool volatil)
+    : path(std::move(path)), volatil(volatil) {
+  if (mkfifo(this->path.c_str(), 0644))
+    throw PosixException();
+}
+
+Fifo::~Fifo() noexcept {
+  if (volatil && unlink(path.c_str()) < 0) {
+    std::cerr << "WARN: could not remove fifo: " << strerror(errno)
+              << std::endl;
+  }
 }
 
 ReadEnd::ReadEnd(Pipe &&pipe) : fd(get_pipe_end(Pipe::READ_END, pipe.fds)) {}

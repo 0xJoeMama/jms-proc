@@ -3,15 +3,20 @@
 #include <sstream>
 #include <sys/wait.h>
 
-#include "except.h"
-#include "pool.h"
+#include "except.hpp"
+#include "pool.hpp"
 
 #define NPROC 200
 
+using pool::Job;
+using pool::JobPool;
+using pool::JobStatus;
+
 int main(void) {
   JobPool pool(NPROC);
+
   try {
-    const Proc *last;
+    const Job *last;
     for (int i = 0; i < NPROC; i++) {
       std::ostringstream ss{};
       ss << i;
@@ -20,7 +25,7 @@ int main(void) {
     }
 
     auto res = pool.get_by_pid(last->get_pid());
-    assert(res && res.value()->get_status() == JobStatus::Running);
+    assert(res && res.value()->get_status() == JobStatus::Active);
 
     pool.wait_all();
 

@@ -1,13 +1,24 @@
 #pragma once
 
 #include <stdexcept>
+#include <string>
+#include <sys/stat.h>
 
-#include "traits.h"
+#include "traits.hpp"
 
 namespace pipes {
 class PipeUpgradeException : std::runtime_error {
 public:
   PipeUpgradeException(const char *msg) : std::runtime_error(msg) {}
+};
+
+class Fifo {
+  std::string path;
+  bool volatil;
+
+public:
+  Fifo(std::string &&path, bool volatil = false);
+  ~Fifo() noexcept;
 };
 
 class Pipe : public io::Read, public io::Write {
@@ -33,6 +44,7 @@ class ReadEnd : public io::Read {
 
 public:
   ReadEnd(Pipe &&pipe);
+  ReadEnd(Fifo &&fifo);
   ReadEnd(const ReadEnd &pipe) = delete;
   ~ReadEnd();
 
@@ -44,6 +56,7 @@ class WriteEnd : public io::Write {
 
 public:
   WriteEnd(Pipe &&pipe);
+  WriteEnd(Fifo &&fifo);
   WriteEnd(const WriteEnd &pipe) = delete;
   ~WriteEnd();
 

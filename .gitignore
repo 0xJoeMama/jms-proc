@@ -1,7 +1,11 @@
 jms_coord
 pool_tests
+store_tests
+fifo_tests
 *.o
+*.d
 
 .cache
 compile_commands.json
 result
+makis/
