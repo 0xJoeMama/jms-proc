@@ -26,5 +26,6 @@ class FileStore {
 public:
   FileStore(std::string_view root_path);
   pipes::Fifo create_fifo(std::string_view name) const;
+  FileStore substore(std::string_view name) const;
 };
 } // namespace store

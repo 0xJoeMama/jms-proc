@@ -35,6 +35,8 @@ public:
   JmsCoord(JmsCoordConfig &&config)
       : config(std::move(config)), store(this->config.get<RunPath>()),
         jms_in(pipes::ReadEnd(store.create_fifo(config::JMS_IN))) {}
+
+  const store::FileStore &get_store() const { return store; }
 };
 
 int main(int, const char **argv) {
@@ -44,6 +46,9 @@ int main(int, const char **argv) {
     Argv args(argv + 1);
     config.parse(args);
     JmsCoord coord(std::move(config));
+
+    pipes::Fifo f2 =
+        coord.get_store().substore("makis").create_fifo("fifo2");
 
     sleep(10);
     return 0;

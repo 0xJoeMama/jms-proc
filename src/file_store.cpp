@@ -134,3 +134,9 @@ Fifo FileStore::create_fifo(std::string_view subpath) const {
 
   return Fifo(std::move(path));
 }
+
+FileStore FileStore::substore(std::string_view name) const {
+  std::ostringstream os{};
+  os << this->root_dir.get_root_path() << "/" << name;
+  return FileStore(os.str());
+}

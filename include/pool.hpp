@@ -1,8 +1,6 @@
 #pragma once
 
 #include <chrono>
-#include <optional>
-#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -42,15 +40,6 @@ public:
   JobPool(const JobPool &) = delete;
 
   const Job &start_job(std::vector<std::string> &&cmd);
-
-  std::optional<Job *> get_by_pid(pid_t pid) {
-    try {
-      return std::make_optional(&this->jobs.at(pid));
-    } catch (const std::out_of_range &) {
-      return std::nullopt;
-    }
-  }
-
   void wait_all();
 };
 } // namespace pool

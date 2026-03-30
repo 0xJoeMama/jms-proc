@@ -3,6 +3,7 @@ pool_tests
 store_tests
 fifo_tests
 poll_tests
+*fifo
 *.o
 *.d
 

@@ -1,12 +1,22 @@
 #include <cerrno>
 #include <cstdio>
 #include <fcntl.h>
+#include <iostream>
 #include <poll.h>
 #include <signal.h>
+#include <stdexcept>
 #include <stdlib.h>
 #include <sys/stat.h>
-#include <sys/types.h>
 #include <unistd.h>
+
+#include "except.hpp"
+#include "pipe.hpp"
+
+struct Makis {
+  int x;
+  float y;
+  char name[20];
+};
 
 int main(void) {
   if (unlink("fifo") < 0 && errno != ENOENT) {
@@ -41,6 +51,26 @@ int main(void) {
   ssize_t re = read(fd, c, sizeof(c));
   c[re] = 0;
   printf("Read '%s'\n", c);
+
+  try {
+    unlink("myfifo");
+    pipes::Fifo fifo("myfifo");
+    if (fork()) {
+      pipes::ReadEnd r(std::move(fifo));
+      Makis m;
+      std::cout << "Reading..." << std::endl;
+      r.read_all(m);
+      std::cout << m.name << std::endl;
+      std::cout << m.x << std::endl;
+      std::cout << m.y << std::endl;
+    } else {
+      pipes::WriteEnd w(std::move(fifo));
+      Makis m{12, 3.14f, "Makis had a lamb"};
+      w.write_all(m);
+    }
+  } catch (const PosixException &e) {
+    std::cerr << e.what() << std::endl;
+  }
 
   return 0;
 }

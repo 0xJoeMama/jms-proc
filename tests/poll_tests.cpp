@@ -3,6 +3,7 @@
 #include <csignal>
 #include <cstdio>
 #include <fcntl.h>
+#include <unistd.h>
 #include <iostream>
 #include <sys/poll.h>
 

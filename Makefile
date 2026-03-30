@@ -1,8 +1,6 @@
-CXX=g++
-CC=gcc
 INCLUDE=include
-CXXFLAGS=-ggdb -std=c++17 -pedantic -Wall -Werror -Wextra -I$(INCLUDE) -MMD
-CFLAGS=-ggdb -std=c11 -pedantic -Wall -Werror -Wextra -I$(INCLUDE)
+CXXFLAGS=-Wall -Werror -Wextra -pedantic -std=c++17 -Iinclude -MMD -MP -g3 $(EXTRAFLAGS)
+LDLIBS += -lstdc++
 
 BINS=jms_coord
 TESTS=pool_tests fifo_tests store_tests poll_tests
@@ -13,10 +11,11 @@ vpath %.hpp include/
 
 all: $(BINS)
 
-jms_coord: file_store.o pipe.o
+jms_coord: jms_coord.o file_store.o pipe.o
 
-pool_tests: pool.o pipe.o
-store_tests: file_store.o pipe.o
+pool_tests: pool_tests.o pool.o pipe.o
+store_tests: store_tests.o file_store.o pipe.o
+fifo_tests: fifo_tests.o pipe.o
 
 test: $(TESTS)
 
