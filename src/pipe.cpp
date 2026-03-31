@@ -14,7 +14,7 @@ size_t read_from_pipe_fd(int fd, void *buf, size_t n) {
   ssize_t res = ::read(fd, buf, n);
 
   if (res < 0)
-    throw PosixException("failed to read from pipe");
+    throw PosixException("failed to read from pipe: ");
 
   return res;
 }
@@ -23,7 +23,7 @@ size_t write_to_pipe_fd(int fd, const void *buf, size_t n) {
   ssize_t res = ::write(fd, const_cast<void *>(buf), n);
 
   if (res < 0)
-    throw PosixException("failed to write to pip");
+    throw PosixException("failed to write to pipe: ");
 
   return res;
 }
@@ -37,7 +37,7 @@ int get_pipe_end(int end, int fds[2]) {
   int fd = fds[end];
   if (fd < 0 || fds[!end] < 0)
     throw PipeUpgradeException(
-        "Attempted to upgrade an already upgraded or moved pipe");
+        "Attempted to upgrade an already upgraded or moved pipe: ");
 
   close_with_warn(fds[!end]);
 
@@ -50,7 +50,7 @@ int get_pipe_end(int end, int fds[2]) {
 
 Pipe::Pipe() {
   if (pipe2(fds, O_CLOEXEC) < 0)
-    throw PosixException("could not create unnamed pipe");
+    throw PosixException("could not create unnamed pipe: ");
 }
 
 size_t Pipe::read(void *buf, size_t n) {

@@ -47,10 +47,13 @@ int main(int, const char **argv) {
     config.parse(args);
     JmsCoord coord(std::move(config));
 
-    pipes::Fifo f2 =
-        coord.get_store().substore("makis").create_fifo("fifo2");
+    pipes::Fifo f2 = coord.get_store().substore("makis").create_fifo("fifo2");
 
-    sleep(10);
+    pipes::ReadEnd r(std::move(f2));
+
+    char buf[1024];
+    r.read_all<char[1024]>(buf);
+
     return 0;
   } catch (const error::ParsingException &e) {
     std::cerr << "ERROR: failed to parse command line arguments: " << e.what()
