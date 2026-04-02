@@ -22,7 +22,7 @@ int main(void) {
     }
 
     pool.wait_all();
-  } catch (const PosixException &pe) {
+  } catch (const psx::PosixException &pe) {
     std::cerr << pe.what() << std::endl;
     throw pe;
   } catch (const FullPoolException &e) {

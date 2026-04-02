@@ -45,13 +45,13 @@ const Job &JobPool::start_job(std::vector<std::string> &&cmd) {
     throw NoCommandException();
 
   // this pipe is used as a synchronization primitive
-  pipes::Pipe pipe;
+  psx::Pipe pipe;
 
   pid_t pid = fork();
 
   switch (pid) {
   case -1:
-    throw PosixException("failed to fork child process: ");
+    throw psx::PosixException("failed to fork child process: ");
   case 0: {
     const char *path = cmd[0].c_str();
     char **const args = new char *[cmd.size() + 1];
@@ -62,19 +62,19 @@ const Job &JobPool::start_job(std::vector<std::string> &&cmd) {
     args[cmd.size()] = nullptr;
 
     {
-      pipes::ReadEnd r(std::move(pipe));
+      psx::ReadEnd r = pipe.read_end();
 
       char ok;
       r.read(&ok, sizeof(ok));
     }
 
     execvp(path, args);
-    throw PosixException("failed to exec new program");
+    throw psx::PosixException("failed to exec new program");
   } break;
   default: {
     this->jobs.emplace(pid, Job(pid));
 
-    pipes::WriteEnd w(std::move(pipe));
+    psx::WriteEnd w = pipe.write_end();
     char ok = 1;
     w.write(&ok, sizeof(ok));
   } break;
@@ -103,7 +103,7 @@ void JobPool::wait_all() {
     }
 
     if (pid < 0 && errno != ECHILD)
-      throw PosixException("could not await children: ");
+      throw psx::PosixException("could not await children: ");
   }
 }
 

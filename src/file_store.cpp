@@ -13,7 +13,7 @@
 #include "file_store.hpp"
 
 using namespace store;
-using namespace pipes;
+using namespace psx;
 
 namespace {
 struct Fts {
@@ -24,14 +24,14 @@ struct Fts {
     fts = fts_open(roots, FTS_PHYSICAL, nullptr);
 
     if (!fts)
-      throw PosixException("failed to create file tree traversal handle: ");
+      throw psx::PosixException("failed to create file tree traversal handle: ");
   }
 
   FTSENT *operator++(int) {
     FTSENT *res = fts_read(fts);
 
     if (!res && errno)
-      throw PosixException("failed to get next file tree traversal object: ");
+      throw psx::PosixException("failed to get next file tree traversal object: ");
 
     return res;
   }
@@ -57,12 +57,12 @@ DIR *mk_open_dir(const char *path) {
   if (res < 0 && errno == EEXIST)
     throw AlreadyThere();
   else if (res < 0)
-    throw PosixException("failed to create directory");
+    throw psx::PosixException("failed to create directory");
 
   dir = opendir(path);
 
   if (!dir)
-    throw PosixException("failed to open directory");
+    throw psx::PosixException("failed to open directory");
 
   return dir;
 }
@@ -85,7 +85,7 @@ Dir::Dir(std::string_view root) : root(root) {
           os << "failed to remove directory '" << ent->fts_accpath << '\''
              << ": ";
 
-          throw PosixException(os.str());
+          throw psx::PosixException(os.str());
         }
 
         break;
@@ -98,7 +98,7 @@ Dir::Dir(std::string_view root) : root(root) {
           std::ostringstream os{};
           os << "failed to unlink path '" << ent->fts_accpath << '\'' << ": ";
 
-          throw PosixException(os.str());
+          throw psx::PosixException(os.str());
         }
 
         break;
@@ -108,7 +108,7 @@ Dir::Dir(std::string_view root) : root(root) {
         std::ostringstream os{};
         os << "invalid file tree entry '" << ent->fts_accpath << "'" << ": ";
 
-        throw PosixException(os.str());
+        throw psx::PosixException(os.str());
       } break;
       default:
         break;

@@ -6,8 +6,8 @@
 int main(void) {
   try {
     store::FileStore store("makis");
-    pipes::Fifo fifo = store.create_fifo("jms_in");
-  } catch (const PosixException &pe) {
+    psx::Fifo fifo = store.create_fifo("jms_in");
+  } catch (const psx::PosixException &pe) {
     std::cerr << pe.what() << std::endl;
     return 1;
   }

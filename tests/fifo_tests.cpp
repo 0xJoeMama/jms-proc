@@ -4,7 +4,6 @@
 #include <iostream>
 #include <poll.h>
 #include <signal.h>
-#include <stdexcept>
 #include <stdlib.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -52,25 +51,25 @@ int main(void) {
   c[re] = 0;
   printf("Read '%s'\n", c);
 
-  try {
-    unlink("myfifo");
-    pipes::Fifo fifo("myfifo");
-    if (fork()) {
-      pipes::ReadEnd r(std::move(fifo));
-      Makis m;
-      std::cout << "Reading..." << std::endl;
-      r.read_all(m);
-      std::cout << m.name << std::endl;
-      std::cout << m.x << std::endl;
-      std::cout << m.y << std::endl;
-    } else {
-      pipes::WriteEnd w(std::move(fifo));
-      Makis m{12, 3.14f, "Makis had a lamb"};
-      w.write_all(m);
-    }
-  } catch (const PosixException &e) {
-    std::cerr << e.what() << std::endl;
-  }
+  // try {
+  //   unlink("myfifo");
+  //   psx::Fifo fifo("myfifo");
+  //   if (fork()) {
+  //     psx::OwnedFd r = fifo.read_end();
+  //     Makis m;
+  //     std::cout << "Reading..." << std::endl;
+  //     r.read_all(m);
+  //     std::cout << m.name << std::endl;
+  //     std::cout << m.x << std::endl;
+  //     std::cout << m.y << std::endl;
+  //   } else {
+  //     psx::WriteEnd w(std::move(fifo));
+  //     Makis m{12, 3.14f, "Makis had a lamb"};
+  //     w.write_all(m);
+  //   }
+  // } catch (const psx::PosixException &e) {
+  //   std::cerr << e.what() << std::endl;
+  // }
 
   return 0;
 }

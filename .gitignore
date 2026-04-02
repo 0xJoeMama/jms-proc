@@ -2,6 +2,7 @@ jms_coord
 pool_tests
 store_tests
 fifo_tests
+fd_tests
 poll_tests
 *fifo
 *.o
