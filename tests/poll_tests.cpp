@@ -24,6 +24,7 @@ public:
     try {
       T t;
       r.read_all<T>(t);
+      assert(t == 674269);
       return psx::PollStatus::Continue;
     } catch (const psx::EofException &) {
       return psx::PollStatus::Stop;
@@ -44,7 +45,6 @@ int main(void) {
     psx::WriteEnd w = p.into_write();
 
     int x = 674269;
-    std::cout << "I wrote " << x << std::endl;
     w.write_all(x);
     exit(0);
   }

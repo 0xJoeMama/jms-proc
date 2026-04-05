@@ -24,14 +24,16 @@ struct Fts {
     fts = fts_open(roots, FTS_PHYSICAL, nullptr);
 
     if (!fts)
-      throw psx::ErrnoException("failed to create file tree traversal handle: ");
+      throw psx::ErrnoException(
+          "failed to create file tree traversal handle: ");
   }
 
   FTSENT *operator++(int) {
     FTSENT *res = fts_read(fts);
 
     if (!res && errno)
-      throw psx::ErrnoException("failed to get next file tree traversal object: ");
+      throw psx::ErrnoException(
+          "failed to get next file tree traversal object: ");
 
     return res;
   }
@@ -68,11 +70,14 @@ DIR *mk_open_dir(const char *path) {
 }
 } // namespace
 
-Dir::Dir(std::string_view root) : root(root) {
+Dir::Dir(std::string_view root, bool delete_if_exists) : root(root) {
   try {
     dir = mk_open_dir(this->root.c_str());
   } catch (const AlreadyThere &) {
-    // dir exists here, thus we need to its contents
+    if (!delete_if_exists)
+      return;
+
+    // dir exists here, thus we need to delete its contents
     Fts fts(this->root.c_str());
 
     FTSENT *ent;
@@ -124,7 +129,10 @@ Dir::~Dir() noexcept {
     std::cerr << strerror(errno) << std::endl;
 }
 
-FileStore::FileStore(std::string_view root_path) : root_dir(root_path) {}
+FileStore::FileStore(bool delete_if_exists, std::string_view root_path)
+    : root_dir(root_path, delete_if_exists) {}
+FileStore::FileStore(std::string_view root_path)
+    : store::FileStore(true, root_path) {}
 
 Fifo FileStore::create_fifo(std::string_view subpath) const {
   std::string path = root_dir.get_root_path();
@@ -138,5 +146,5 @@ Fifo FileStore::create_fifo(std::string_view subpath) const {
 FileStore FileStore::substore(std::string_view name) const {
   std::ostringstream os{};
   os << this->root_dir.get_root_path() << "/" << name;
-  return FileStore(os.str());
+  return FileStore(false, os.str());
 }

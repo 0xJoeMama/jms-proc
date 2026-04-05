@@ -13,14 +13,6 @@
 #include "traits.hpp"
 
 namespace psx {
-class Fifo {
-  std::string path;
-
-public:
-  Fifo(std::string &&path) : path(std::move(path)) {}
-  Fifo(const Fifo &) = delete;
-};
-
 class ReadEnd : public io::Read, HasFd {
   OwnedFd fd;
 
@@ -98,6 +90,56 @@ public:
   }
 };
 
+class Fifo {
+  std::string path;
+  OwnedFd fifo;
+
+  static OwnedFd mkfifo(const std::string &path) {
+    while (1) {
+      while (::mkfifo(path.c_str(), 0644) < 0) {
+        if (errno == EEXIST)
+          unlink(path.c_str());
+        else
+          throw ErrnoException("could not create FIFO");
+      }
+
+      int fd = open(path.c_str(), O_RDWR | O_NONBLOCK);
+      if (fd < 0) {
+        if (errno == EINTR || errno == ENOENT)
+          continue;
+
+        throw ErrnoException("could not open FIFO");
+      }
+
+      OwnedFd ofd(fd);
+      struct stat st;
+      if (fstat(ofd.get_fd(), &st) < 0)
+        throw ErrnoException("could not stat fifo");
+
+      if (!(st.st_mode & S_IFIFO))
+        continue;
+
+      return ofd;
+    }
+  }
+
+public:
+  Fifo(std::string path) : path(std::move(path)), fifo(mkfifo(this->path)) {}
+
+  ReadEnd into_read() {
+    if (fcntl(fifo.get_fd(), F_SETFD, O_RDONLY | O_NONBLOCK) < 0)
+      throw ErrnoException("failed to change access permissions on open FIFO");
+
+    return std::move(fifo);
+  }
+
+  WriteEnd into_write() {
+    if (fcntl(fifo.get_fd(), F_SETFD, O_WRONLY | O_NONBLOCK) < 0)
+      throw ErrnoException("failed to change access permissions on open FIFO");
+
+    return std::move(fifo);
+  }
+};
 } // namespace psx
 
 namespace std {
