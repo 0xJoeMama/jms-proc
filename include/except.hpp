@@ -7,21 +7,30 @@
 #include <string_view>
 
 namespace psx {
-class PosixException : std::exception {
+class PosixException : public std::exception {};
+
+class EofException : public PosixException {
+public:
+  const char *what() const noexcept override {
+    return "Reached End of File";
+  }
+};
+
+class ErrnoException : public PosixException {
   int err;
   std::string errmsg;
 
 public:
-  PosixException(int errnum) : err(errnum), errmsg(strerror(errnum)) {}
-  PosixException() : psx::PosixException(errno) {}
-  PosixException(std::string_view ctx, const PosixException &pe) : err(pe.err) {
+  ErrnoException(int errnum) : err(errnum), errmsg(strerror(errnum)) {}
+  ErrnoException() : psx::ErrnoException(errno) {}
+  ErrnoException(std::string_view ctx, const ErrnoException &pe) : err(pe.err) {
     std::ostringstream os;
     os << ctx << ": " << pe.errmsg << std::endl;
 
     errmsg = os.str();
   }
 
-  PosixException(std::string_view ctx) : err(errno) {
+  ErrnoException(std::string_view ctx) : err(errno) {
     std::ostringstream os;
     os << ctx << ": " << strerror(errno) << std::endl;
 

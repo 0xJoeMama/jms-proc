@@ -7,7 +7,7 @@ int main(void) {
   try {
     store::FileStore store("makis");
     psx::Fifo fifo = store.create_fifo("jms_in");
-  } catch (const psx::PosixException &pe) {
+  } catch (const psx::ErrnoException &pe) {
     std::cerr << pe.what() << std::endl;
     return 1;
   }

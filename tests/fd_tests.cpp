@@ -18,24 +18,20 @@ int main(void) {
     std::cout << __FILE__ << std::endl;
 
     psx::Pipe p;
-    psx::WriteEnd w = p.write_end();
-
-    auto [r1, _] = std::move(p);
-
+    auto [r, w] = std::move(p);
     {
-      auto r = p.read_end();
-
+      auto r2 = std::move(r);
       int x = 67;
       w.write(&x, sizeof(x));
 
       int y;
-      r.read(&y, sizeof(y));
+      r2.read(&y, sizeof(y));
 
       std::cout << x << std::endl;
     }
 
     return 0;
-  } catch (const psx::PosixException &pe) {
+  } catch (const psx::ErrnoException &pe) {
     std::cerr << "ERROR: " << pe.what() << std::endl;
 
     return 1;

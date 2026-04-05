@@ -16,6 +16,7 @@ jms_coord: jms_coord.o file_store.o
 pool_tests: pool_tests.o pool.o
 store_tests: store_tests.o file_store.o
 fifo_tests: fifo_tests.o
+poll_tests: poll_tests.o
 
 test: $(TESTS)
 

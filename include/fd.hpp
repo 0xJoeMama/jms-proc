@@ -18,7 +18,7 @@ class OwnedFd : public HasFd {
 public:
   OwnedFd(int fd) : fd(fd) {
     if (fd < 0)
-      throw psx::PosixException();
+      throw psx::ErrnoException();
   }
 
   OwnedFd(const OwnedFd &) = delete;
@@ -28,7 +28,6 @@ public:
     if (fd < 0)
       return;
 
-    std::cout << "Closing " << fd << std::endl;
     if (close(fd) < 0)
       std::cerr << strerror(errno) << std::endl;
   }

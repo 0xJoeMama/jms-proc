@@ -12,6 +12,8 @@
           buildInputs = with pkgs; [
             gnumake
             gcc
+            unzip
+            bear
           ];
 
           installPhase = ''

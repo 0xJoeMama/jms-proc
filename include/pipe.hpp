@@ -19,9 +19,6 @@ class Fifo {
 public:
   Fifo(std::string &&path) : path(std::move(path)) {}
   Fifo(const Fifo &) = delete;
-
-  friend class ReadEnd;
-  friend class WriteEnd;
 };
 
 class ReadEnd : public io::Read, HasFd {
@@ -34,7 +31,9 @@ public:
     ssize_t res = ::read(fd.get_fd(), buf, n);
 
     if (res < 0)
-      throw PosixException("failed to read from pipe");
+      throw ErrnoException("failed to read from pipe");
+    else if (res == 0)
+      throw EofException();
 
     return res;
   }
@@ -52,7 +51,9 @@ public:
     ssize_t res = ::write(fd.get_fd(), const_cast<void *>(buf), n);
 
     if (res < 0)
-      throw PosixException("failed to write to pipe");
+      throw ErrnoException("failed to write to pipe");
+    else if (res == 0)
+      throw EofException();
 
     return res;
   }
@@ -67,7 +68,7 @@ class Pipe {
   static std::array<OwnedFd, 2> open_pipe(int flags) {
     int fds[2];
     if (pipe2(fds, flags) < 0)
-      throw PosixException("failed to open pipe");
+      throw ErrnoException("failed to open pipe");
 
     return {OwnedFd(fds[0]), OwnedFd(fds[1])};
   }
@@ -77,8 +78,16 @@ class Pipe {
 
 public:
   Pipe(int flags = 0) : psx::Pipe(open_pipe(flags)) {}
-  ReadEnd read_end() { return std::move(read); }
-  WriteEnd write_end() { return std::move(write); }
+
+  ReadEnd into_read() {
+    auto _ = std::move(write);
+    return std::move(read);
+  }
+
+  WriteEnd into_write() {
+    auto _ = std::move(read);
+    return std::move(write);
+  }
 
   template <size_t i> auto get() {
     if constexpr (i == 0) {

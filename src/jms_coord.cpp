@@ -26,18 +26,18 @@ struct JmsCoordConfig
   static constexpr const char *example = "-l . -n 12";
 };
 
-class JmsCoord {
-  const JmsCoordConfig config;
-  const store::FileStore store;
-  const pipes::ReadEnd jms_in;
+void run(JmsCoordConfig cfg) {
+  store::FileStore store(cfg.get<RunPath>());
 
-public:
-  JmsCoord(JmsCoordConfig &&config)
-      : config(std::move(config)), store(this->config.get<RunPath>()),
-        jms_in(pipes::ReadEnd(store.create_fifo(config::JMS_IN))) {}
-
-  const store::FileStore &get_store() const { return store; }
-};
+  // 0. It needs to wait on input from jms_in, as long as that pipe is open and shutdown/SIGTERM has not been sent
+  //    (we need a non-blocking fd that will signal when a client connection joins)
+  // 1. It needs to read sentences from jms_in and return results to jms_out
+  //    (reading of sentences can happen not-atomically, and so we need a way to keep state, while allowing for multiple consoles).
+  // 2. It needs to read and write to children processes
+  //    (this is also true here)
+  // 3. It needs to wait on pool processes to exit
+  //    (we need a signal handler for SIGCHLD that writes to an fd that we can handle synchronously)
+}
 
 int main(int, const char **argv) {
   JmsCoordConfig config{};
@@ -45,14 +45,7 @@ int main(int, const char **argv) {
   try {
     Argv args(argv + 1);
     config.parse(args);
-    JmsCoord coord(std::move(config));
-
-    pipes::Fifo f2 = coord.get_store().substore("makis").create_fifo("fifo2");
-
-    pipes::ReadEnd r(std::move(f2));
-
-    char buf[1024];
-    r.read_all<char[1024]>(buf);
+    run(std::move(config));
 
     return 0;
   } catch (const error::ParsingException &e) {
