@@ -25,7 +25,7 @@ int main(void) {
   } catch (const psx::ErrnoException &pe) {
     std::cerr << pe.what() << std::endl;
     throw pe;
-  } catch (const FullPoolException &e) {
+  } catch (const jms::FullPoolException &e) {
     std::cerr << e.what() << std::endl;
     throw e;
   }

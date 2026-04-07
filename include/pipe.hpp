@@ -1,7 +1,9 @@
 #pragma once
 
 #include <array>
+#include <cerrno>
 #include <fcntl.h>
+#include <sstream>
 #include <string>
 #include <sys/stat.h>
 #include <tuple>
@@ -13,6 +15,8 @@
 #include "traits.hpp"
 
 namespace psx {
+// TODO: we really need to make a compilation unit for this instead of just
+// TODO: inlining everything
 class ReadEnd : public io::Read, HasFd {
   OwnedFd fd;
 
@@ -92,23 +96,33 @@ public:
 
 class Fifo {
   std::string path;
-  OwnedFd fifo;
 
-  static OwnedFd mkfifo(const std::string &path) {
-    while (1) {
-      while (::mkfifo(path.c_str(), 0644) < 0) {
-        if (errno == EEXIST)
-          unlink(path.c_str());
-        else
-          throw ErrnoException("could not create FIFO");
+  void mkfifo(bool expect_there) {
+    while (::mkfifo(path.c_str(), 0644) < 0) {
+      if (expect_there && errno == EEXIST)
+        return;
+
+      if (errno == EEXIST) {
+        unlink(path.c_str());
+      } else {
+        std::ostringstream os{"could not create FIFO at "};
+        os << path;
+
+        throw ErrnoException(os.str());
       }
+    }
+  }
 
-      int fd = open(path.c_str(), O_RDWR | O_NONBLOCK);
+  OwnedFd open_fifo(int flags) {
+    for (;;) {
+      int fd = open(path.c_str(), flags);
       if (fd < 0) {
         if (errno == EINTR || errno == ENOENT)
           continue;
 
-        throw ErrnoException("could not open FIFO");
+        std::ostringstream os{};
+        os << "could not open FIFO at " << path;
+        throw ErrnoException(os.str());
       }
 
       OwnedFd ofd(fd);
@@ -116,28 +130,29 @@ class Fifo {
       if (fstat(ofd.get_fd(), &st) < 0)
         throw ErrnoException("could not stat fifo");
 
-      if (!(st.st_mode & S_IFIFO))
-        continue;
+      if (!(st.st_mode & S_IFIFO)) {
+        std::ostringstream os{};
+        os << "invalid node type at " << path << ": expected S_IFIFO("
+           << S_IFIFO << ") but got " << st.st_mode << "instead";
+
+        throw FifoError(os.str());
+      }
 
       return ofd;
     }
   }
 
 public:
-  Fifo(std::string path) : path(std::move(path)), fifo(mkfifo(this->path)) {}
-
-  ReadEnd into_read() {
-    if (fcntl(fifo.get_fd(), F_SETFD, O_RDONLY | O_NONBLOCK) < 0)
-      throw ErrnoException("failed to change access permissions on open FIFO");
-
-    return std::move(fifo);
+  Fifo(std::string_view path, bool expect_there) : path(path) {
+    mkfifo(expect_there);
   }
 
-  WriteEnd into_write() {
-    if (fcntl(fifo.get_fd(), F_SETFD, O_WRONLY | O_NONBLOCK) < 0)
-      throw ErrnoException("failed to change access permissions on open FIFO");
+  ReadEnd into_read(int flags = O_NONBLOCK) {
+    return open_fifo(flags | O_RDONLY);
+  }
 
-    return std::move(fifo);
+  WriteEnd into_write(int flags = O_NONBLOCK) {
+    return open_fifo(flags | O_WRONLY);
   }
 };
 } // namespace psx

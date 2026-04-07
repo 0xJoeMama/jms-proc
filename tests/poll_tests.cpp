@@ -5,7 +5,6 @@
 #include <cstdlib>
 #include <fcntl.h>
 #include <iostream>
-#include <string>
 #include <sys/poll.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -13,30 +12,32 @@
 #include "except.hpp"
 #include "pipe.hpp"
 #include "poll.hpp"
-
-template <typename T> class ReadItem : public psx::Pollable {
-  psx::ReadEnd r;
-
-public:
-  ReadItem(psx::ReadEnd &&r) : r(std::move(r)) {}
-
-  psx::PollStatus poll(short) override {
-    try {
-      T t;
-      r.read_all<T>(t);
-      assert(t == 674269);
-      return psx::PollStatus::Continue;
-    } catch (const psx::EofException &) {
-      return psx::PollStatus::Stop;
-    } catch (const psx::ErrnoException &pe) {
-      std::cerr << "Failed to read anything" << std::endl;
-      return psx::PollStatus::Stop;
-    }
-  }
-
-  short get_events() const { return POLLIN; }
-  int get_fd() const override { return r.get_fd(); }
-};
+//
+// template <typename T> class ReadItem : public psx::Pollable<T> {
+//   psx::ReadEnd r;
+//
+// public:
+//   ReadItem(psx::ReadEnd &&r) : r(std::move(r)) {}
+//
+//   psx::PollStatus poll(short) override {
+//     try {
+//       T t;
+//       r.read_all<T>(t);
+//       assert(t == 674269);
+//       return psx::PollStatus::Continue;
+//     } catch (const psx::EofException &) {
+//       return psx::PollStatus::Stop;
+//     } catch (const psx::ErrnoException &pe) {
+//       std::cerr << "Failed to read anything" << std::endl;
+//       return psx::PollStatus::Stop;
+//     }
+//   }
+//
+//   short get_events() const override { return POLLIN; }
+//   int get_fd() const override { return r.get_fd(); }
+//
+//   int result()
+// };
 
 int main(void) {
   psx::Pipe p;
@@ -50,13 +51,13 @@ int main(void) {
   }
 
   psx::ReadEnd r = p.into_read();
-  ReadItem<int> it(std::move(r));
-  it.get_fd();
-  psx::Poll poll;
-  poll.subscribe(std::move(it));
+  // ReadItem<int> it(std::move(r));
+  // it.get_fd();
+  psx::Poll<int> poll;
+  // poll.subscribe(std::move(it));
 
   while (poll.should_continue()) {
-    poll.poll();
+    poll.run_to_completion();
     while (wait(NULL) > 0)
       ;
   }

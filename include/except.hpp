@@ -9,11 +9,17 @@
 namespace psx {
 class PosixException : public std::exception {};
 
+class FifoError : public PosixException {
+  std::string s;
+
+public:
+  FifoError(const std::string &s) : s(s) {}
+  const char *what() const noexcept override { return s.c_str(); }
+};
+
 class EofException : public PosixException {
 public:
-  const char *what() const noexcept override {
-    return "Reached End of File";
-  }
+  const char *what() const noexcept override { return "Reached End of File"; }
 };
 
 class ErrnoException : public PosixException {
@@ -42,6 +48,7 @@ public:
 };
 } // namespace psx
 
+namespace jms {
 class FullPoolException : std::exception {
 public:
   const char *what() const noexcept override { return "Job pool was full"; }
@@ -53,3 +60,4 @@ public:
     return "No command was specified";
   }
 };
+} // namespace jms

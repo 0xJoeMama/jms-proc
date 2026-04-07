@@ -140,7 +140,7 @@ Fifo FileStore::create_fifo(std::string_view subpath) const {
   path.push_back('/');
   path.append(subpath);
 
-  return Fifo(std::move(path));
+  return Fifo(std::move(path), false);
 }
 
 FileStore FileStore::substore(std::string_view name) const {

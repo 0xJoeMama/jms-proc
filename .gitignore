@@ -1,4 +1,5 @@
 jms_coord
+jms_console
 pool_tests
 store_tests
 fifo_tests
@@ -12,3 +13,4 @@ poll_tests
 compile_commands.json
 result
 makis/
+run/

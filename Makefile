@@ -2,7 +2,7 @@ INCLUDE=include
 CXXFLAGS=-Wall -Werror -Wextra -pedantic -std=c++17 -Iinclude -MMD -MP -g3 $(EXTRAFLAGS)
 LDLIBS += -lstdc++
 
-BINS=jms_coord
+BINS=jms_coord jms_console
 TESTS=pool_tests fifo_tests store_tests poll_tests fd_tests
 
 vpath %.cpp src/
@@ -12,11 +12,13 @@ vpath %.hpp include/
 all: $(BINS)
 
 jms_coord: jms_coord.o file_store.o
+jms_console: jms_console.o file_store.o
 
 pool_tests: pool_tests.o pool.o
 store_tests: store_tests.o file_store.o
 fifo_tests: fifo_tests.o
 poll_tests: poll_tests.o
+fd_tests: fd_tests.o
 
 test: $(TESTS)
 

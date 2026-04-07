@@ -39,10 +39,10 @@ JobPool::JobPool(size_t n) : n(n), jobs{} {
 
 const Job &JobPool::start_job(std::vector<std::string> &&cmd) {
   if (this->jobs.size() == n)
-    throw FullPoolException();
+    throw jms::FullPoolException();
 
   if (cmd.size() == 0)
-    throw NoCommandException();
+    throw jms::NoCommandException();
 
   // this pipe is used as a synchronization primitive
   psx::Pipe pipe;
