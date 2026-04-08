@@ -10,6 +10,7 @@
           pname = "jms";
           version = "unstable";
           buildInputs = with pkgs; [
+            bashInteractive
             gnumake
             gcc
             clang-tools
