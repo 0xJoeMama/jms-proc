@@ -18,7 +18,7 @@ class OwnedFd : public HasFd {
 public:
   OwnedFd(int fd) : fd(fd) {
     if (fd < 0)
-      throw psx::ErrnoException();
+      throw psx::ErrnoException("invalid file descriptor");
   }
 
   OwnedFd(const OwnedFd &) = delete;
@@ -33,16 +33,5 @@ public:
   }
 
   int get_fd() const override { return fd; }
-};
-
-class Fd : public HasFd {
-  OwnedFd &owned;
-
-public:
-  Fd(OwnedFd &owned) : owned(owned) {}
-  Fd(const Fd &other) : owned(other.owned) {}
-  Fd(Fd &&) = delete;
-
-  int get_fd() const override { return owned.get_fd(); }
 };
 } // namespace psx

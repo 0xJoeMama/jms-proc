@@ -1,41 +1,77 @@
 #include "args.hpp"
 #include "config.hpp"
+#include "except.hpp"
+#include "fd.hpp"
 #include "pipe.hpp"
-#include "util.hpp"
 
 #include <exception>
+#include <fcntl.h>
 #include <iostream>
 #include <sstream>
-#include <stdexcept>
 #include <unistd.h>
 
-void send_operations(std::string_view, psx::WriteEnd &) {
-  todo("send_operations");
+namespace {
+void handle_command(const jms::ConsoleConfig &cfg, psx::WriteEnd &w,
+                    const std::string &op) {
+  std::istringstream is(op);
+  w.write_all(op.size());
+  w.write_from_istream(is, op.size());
+
+  psx::ReadEnd r = psx::Fifo(cfg.get<jms::ReadPath>(), true).into_read(0);
+  size_t res_len = 0;
+  r.read_all(res_len);
+  std::ostringstream os{};
+  r.read_to_ostream(os, res_len);
+  std::string response = os.str();
+  std::cout << response << std::endl;
 }
+
+void send_operations(const jms::ConsoleConfig &cfg, std::string &path,
+                     psx::WriteEnd &w) {
+  psx::OwnedFd fd(open(path.c_str(), O_RDONLY));
+  psx::ReadEnd r(std::move(fd));
+
+  std::stringstream ss{};
+
+  for (;;) {
+    try {
+      r.read_max_to_ostream(ss);
+    } catch (const psx::EofException &) {
+      return;
+    }
+
+    std::cout << "Sending file ops" << std::endl;
+
+    std::string op{};
+    while (std::getline(ss, op)) {
+      if (op.empty())
+        continue;
+
+      std::cout << "Now sending " << op.size() << " bytes" << std::endl;
+      handle_command(cfg, w, op);
+    }
+
+    if (ss.eof())
+      ss << op;
+    // TODO: make this able to handle input operations longer than 512 bytes
+  }
+}
+} // namespace
 
 void run(jms::ConsoleConfig cfg) {
   psx::WriteEnd w = psx::Fifo(cfg.get<jms::WritePath>(), true).into_write(0);
   std::string ops(cfg.get<jms::OpFile>());
   if (!ops.empty())
-    send_operations(ops, w);
+    send_operations(cfg, ops, w);
 
   std::string op{};
-  while (std::getline(std::cin, op)) {
-    std::istringstream is(op);
-    w.write_all(op.size());
-    w.write_from_istream(is, op.size());
 
-    psx::ReadEnd r = psx::Fifo(cfg.get<jms::ReadPath>(), true).into_read(0);
-    size_t res_len = 0;
-    r.read_all(res_len);
-    std::ostringstream os{};
-    r.read_to_ostream(os, res_len);
-    std::string response = os.str();
-    std::cout << response << std::endl;
-  }
+  std::cin.exceptions(std::ios_base::badbit);
 
-  if (!std::cin)
-    throw std::runtime_error("failed to read user input");
+  while (std::getline(std::cin, op))
+    handle_command(cfg, w, op);
+
+  std::cout << "Terminating..." << std::endl;
 }
 
 int main(int, const char **argv) {

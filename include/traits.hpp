@@ -11,6 +11,13 @@ class Read {
 public:
   virtual size_t read(void *buf, size_t n) = 0;
 
+  template <size_t N = _POSIX_PIPE_BUF>
+  void read_max_to_ostream(std::ostream &os) {
+    char buf[N];
+    size_t last = this->read(buf, N);
+    os.write(buf, last);
+  }
+
   void read_to_ostream(std::ostream &os, size_t n) {
     char buf[_POSIX_PIPE_BUF];
     size_t read = 0;
