@@ -1,13 +1,11 @@
 #include "args.hpp"
 #include "config.hpp"
-#include "except.hpp"
-#include "fd.hpp"
 #include "pipe.hpp"
 
 #include <exception>
 #include <fcntl.h>
+#include <fstream>
 #include <iostream>
-#include <sstream>
 #include <unistd.h>
 
 namespace {
@@ -27,52 +25,38 @@ void handle_command(const jms::ConsoleConfig &cfg, psx::WriteEnd &w,
 }
 
 void send_operations(const jms::ConsoleConfig &cfg, std::string &path,
-                     psx::WriteEnd &w) {
-  psx::OwnedFd fd(open(path.c_str(), O_RDONLY));
-  psx::ReadEnd r(std::move(fd));
+                     psx::WriteEnd &w, size_t &command_cnt) {
+  std::cout << "Operation file " << path << " was provided. Sending..." << std::endl;
+  std::ifstream fs(path);
 
-  std::stringstream ss{};
+  std::string op;
+  while (std::getline(fs, op)) {
+    if (op.empty())
+      continue;
 
-  for (;;) {
-    try {
-      r.read_max_to_ostream(ss);
-    } catch (const psx::EofException &) {
-      return;
-    }
-
-    std::cout << "Sending file ops" << std::endl;
-
-    std::string op{};
-    while (std::getline(ss, op)) {
-      if (op.empty())
-        continue;
-
-      std::cout << "Now sending " << op.size() << " bytes" << std::endl;
-      handle_command(cfg, w, op);
-    }
-
-    if (ss.eof())
-      ss << op;
-    // TODO: make this able to handle input operations longer than 512 bytes
+    std::cout << command_cnt++ << ": jms_console > " << op << std::endl;
+    handle_command(cfg, w, op);
   }
 }
-} // namespace
 
 void run(jms::ConsoleConfig cfg) {
   psx::WriteEnd w = psx::Fifo(cfg.get<jms::WritePath>(), true).into_write(0);
   std::string ops(cfg.get<jms::OpFile>());
+
+  size_t command_cnt = 0;
   if (!ops.empty())
-    send_operations(cfg, ops, w);
+    send_operations(cfg, ops, w, command_cnt);
 
   std::string op{};
 
   std::cin.exceptions(std::ios_base::badbit);
 
-  while (std::getline(std::cin, op))
+  while (std::cout << command_cnt++ << ": jms_console > ", std::getline(std::cin, op))
     handle_command(cfg, w, op);
 
-  std::cout << "Terminating..." << std::endl;
+  std::cout << "EOF given. Terminating..." << std::endl;
 }
+} // namespace
 
 int main(int, const char **argv) {
   jms::ConsoleConfig cfg{};
