@@ -12,6 +12,7 @@
           buildInputs = with pkgs; [
             gnumake
             gcc
+            clang-tools
             unzip
             bear
           ];
