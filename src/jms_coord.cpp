@@ -1,16 +1,20 @@
 #include <cerrno>
 #include <fcntl.h>
 #include <iostream>
+#include <optional>
 #include <sstream>
 #include <sys/poll.h>
 
 #include "args.hpp"
+#include "command.hpp"
 #include "config.hpp"
 #include "except.hpp"
 #include "jms_coord.hpp"
 #include "pipe.hpp"
 #include "poll.hpp"
 #include "util.hpp"
+
+using namespace jms;
 
 class WaitForCommand : public psx::Async<std::string> {
   psx::ReadEnd &jms_in;
@@ -27,10 +31,14 @@ public:
       } catch (const psx::EofException &) {
         return psx::PollStatus::Stop;
       } catch (const psx::ErrnoException &e) {
-        if (e.get_errno() == EAGAIN)
+        switch (e.get_errno()) {
+        case EAGAIN:
+          /* fallthrough */
+        case EINTR:
           return psx::PollStatus::Continue;
-
-        return psx::PollStatus::Stop;
+        default:
+          return psx::PollStatus::Stop;
+        };
       }
     }
 
@@ -62,18 +70,22 @@ public:
   std::string &result() override { return command; }
 };
 
-using namespace jms;
-
 Coord::Coord(CoordConfig &&cfg)
     : cfg(std::move(cfg)), store(this->cfg.get<RunPath>()),
       jms_in(
           store.create_fifo(config::JMS_IN).into_read(O_CLOEXEC | O_NONBLOCK)),
-      jms_out(store.create_fifo(config::JMS_OUT)) {}
+      jms_out(store.create_fifo(config::JMS_OUT)), pools{},
+      last_pool(std::nullopt), curr_job{0} {}
 
 std::string Coord::execute(std::string &&command) {
-  // TODO: make this actually execute the command a respond
-  std::cout << "Console sent " << command << std::endl;
-  return command;
+  try {
+    auto cmd = jms::parse_command(std::move(command));
+    return cmd->execute(*this);
+  } catch (const jms::error::CommandParseError &e) {
+    return e.what();
+  } catch (const jms::error::CommandExecutionError &e) {
+    return e.what();
+  }
 }
 
 void Coord::run() {
@@ -126,7 +138,7 @@ int main(int, const char **argv) {
     coord.run();
 
     return 0;
-  } catch (const error::ParsingException &e) {
+  } catch (const ::error::ParsingException &e) {
     if (config.get<jms::Help>()) {
       config.print_usage(argv[0], std::cout);
       return 0;

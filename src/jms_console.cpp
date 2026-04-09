@@ -1,12 +1,13 @@
-#include "args.hpp"
-#include "config.hpp"
-#include "pipe.hpp"
-
 #include <exception>
 #include <fcntl.h>
 #include <fstream>
 #include <iostream>
 #include <unistd.h>
+
+#include "args.hpp"
+#include "config.hpp"
+#include "signals.hpp"
+#include "pipe.hpp"
 
 namespace {
 void handle_command(const jms::ConsoleConfig &cfg, psx::WriteEnd &w,
@@ -51,8 +52,12 @@ void run(jms::ConsoleConfig cfg) {
 
   std::cin.exceptions(std::ios_base::badbit);
 
-  while (std::cout << command_cnt++ << ": jms_console > ", std::getline(std::cin, op))
+  while (std::cout << command_cnt++ << ": jms_console > ", std::getline(std::cin, op)) {
+    if (op.empty()) 
+      continue;
+
     handle_command(cfg, w, op);
+  }
 
   std::cout << "EOF given. Terminating..." << std::endl;
 }
@@ -70,6 +75,7 @@ int main(int, const char **argv) {
       return 0;
     }
 
+    jms::signals::block_unwanted();
     run(std::move(cfg));
     return 0;
   } catch (const error::ParsingException &e) {

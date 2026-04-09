@@ -14,7 +14,7 @@
             gnumake
             gcc
             clang-tools
-            unzip
+            gdb
             bear
           ];
 
