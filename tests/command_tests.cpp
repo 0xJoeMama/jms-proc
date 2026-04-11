@@ -6,22 +6,25 @@
 void test_basic_command() {
   std::istringstream is("shutdown");
   try {
-    jms::Shutdown shutdown(is);
-  } catch (const jms::CommandParseError &) {
+    jms::PeekableStream s(is);
+    jms::Shutdown shutdown(s);
+  } catch (const jms::error::CommandParseError &) {
     assert(0 && "expected parsing to work");
   }
 
   is = std::istringstream("submit makis had a little lamb");
 
   try {
-    jms::Shutdown shutdown(is);
+    jms::PeekableStream s(is);
+    jms::Shutdown shutdown(s);
     assert(0 && "expected to fail");
-  } catch (const jms::CommandParseError &) {
+  } catch (const jms::error::NextCommand &) {
   }
 
   try {
-    jms::Submit submit(is);
-  } catch (const jms::CommandParseError &) {
+    jms::PeekableStream s(is);
+    jms::Submit submit(s);
+  } catch (const jms::error::CommandParseError &) {
     assert(0 && "expected to succeed");
   }
 }

@@ -5,9 +5,11 @@
 #include <unistd.h>
 #include <vector>
 
+#include "async_ops.hpp"
 #include "except.hpp"
 #include "pipe.hpp"
 #include "pool.hpp"
+#include "poll.hpp"
 #include "util.hpp"
 
 using namespace pool;
@@ -110,3 +112,11 @@ void JobPool::wait_all() {
 Job::Job(pid_t pid)
     : pid(pid), status(JobStatus::Active),
       last_start(chr::steady_clock::now()) {}
+
+int pool::pool_main(size_t n, psx::ReadEnd r, psx::WriteEnd w) {
+  JobPool pool(n);
+  (void)w;
+
+  while (1)
+    auto res = psx::run_to_completion(jms::WaitReadCommand(r));
+}

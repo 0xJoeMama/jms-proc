@@ -7,12 +7,7 @@
 #include "except.hpp"
 
 namespace psx {
-class HasFd {
-public:
-  virtual int get_fd() const = 0;
-};
-
-class OwnedFd : public HasFd {
+class OwnedFd {
   int fd;
 
 public:
@@ -32,6 +27,6 @@ public:
       std::cerr << strerror(errno) << std::endl;
   }
 
-  int get_fd() const override { return fd; }
+  int get_fd() const { return fd; }
 };
 } // namespace psx

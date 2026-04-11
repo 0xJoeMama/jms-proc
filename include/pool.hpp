@@ -5,6 +5,8 @@
 #include <unordered_map>
 #include <vector>
 
+#include "pipe.hpp"
+
 namespace pool {
 enum class JobStatus {
   Active,
@@ -42,4 +44,6 @@ public:
   const Job &start_job(std::vector<std::string> &&cmd);
   void wait_all();
 };
+
+int pool_main(size_t n, psx::ReadEnd r, psx::WriteEnd w);
 } // namespace pool

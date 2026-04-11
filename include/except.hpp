@@ -56,8 +56,6 @@ public:
 
 class NoCommandException : std::exception {
 public:
-  const char *what() const noexcept override {
-    return "No command was specified";
-  }
+  const char *what() const noexcept override { return "Job pool was full"; }
 };
 } // namespace jms

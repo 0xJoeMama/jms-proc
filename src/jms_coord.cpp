@@ -1,81 +1,30 @@
-#include <cerrno>
+#include <charconv>
 #include <fcntl.h>
 #include <iostream>
 #include <optional>
-#include <sstream>
 #include <sys/poll.h>
+#include <unistd.h>
+#include <utility>
 
 #include "args.hpp"
+#include "async_ops.hpp"
 #include "command.hpp"
 #include "config.hpp"
 #include "except.hpp"
 #include "jms_coord.hpp"
 #include "pipe.hpp"
 #include "poll.hpp"
+#include "pool.hpp"
 #include "util.hpp"
 
 using namespace jms;
-
-class WaitForCommand : public psx::Async<std::string> {
-  psx::ReadEnd &jms_in;
-  size_t cmd_len;
-  std::string command;
-
-public:
-  WaitForCommand(psx::ReadEnd &jms_in) : jms_in(jms_in), cmd_len(0) {}
-
-  psx::PollStatus poll(short) override {
-    if (cmd_len == 0) {
-      try {
-        jms_in.read_all(cmd_len);
-      } catch (const psx::EofException &) {
-        return psx::PollStatus::Stop;
-      } catch (const psx::ErrnoException &e) {
-        switch (e.get_errno()) {
-        case EAGAIN:
-          /* fallthrough */
-        case EINTR:
-          return psx::PollStatus::Continue;
-        default:
-          return psx::PollStatus::Stop;
-        };
-      }
-    }
-
-    if (command.size() == cmd_len)
-      return psx::PollStatus::Done;
-
-    std::ostringstream os{};
-
-    try {
-      jms_in.read_to_ostream(os, cmd_len - command.size());
-      command.append(os.str());
-
-      return psx::PollStatus::Done;
-    } catch (const psx::ErrnoException &e) {
-      if (e.get_errno() == EAGAIN) {
-        command.append(os.str());
-        return psx::PollStatus::Continue;
-      }
-
-      return psx::PollStatus::Stop;
-    } catch (const psx::EofException &) {
-      return psx::PollStatus::Stop;
-    }
-  }
-
-  short get_events() const override { return POLLIN; }
-  int get_fd() const override { return jms_in.get_fd(); }
-
-  std::string &result() override { return command; }
-};
 
 Coord::Coord(CoordConfig &&cfg)
     : cfg(std::move(cfg)), store(this->cfg.get<RunPath>()),
       jms_in(
           store.create_fifo(config::JMS_IN).into_read(O_CLOEXEC | O_NONBLOCK)),
       jms_out(store.create_fifo(config::JMS_OUT)), pools{},
-      last_pool(std::nullopt), curr_job{0} {}
+      last_pool(std::nullopt), next_pool{0}, next_job{0} {}
 
 std::string Coord::execute(std::string &&command) {
   try {
@@ -88,37 +37,64 @@ std::string Coord::execute(std::string &&command) {
   }
 }
 
+PoolHandle &Coord::new_pool() {
+  // one path of this runs on the child only (therefore is a noreturn)
+  // the other on the parent
+  pid_t ret;
+  PoolId pool_id = next_pool++;
+
+  char buf[21];
+
+  auto res = std::to_chars(buf, buf + sizeof(buf), pool_id, 10);
+  *res.ptr = 0;
+
+  store::FileStore pool_store = store.substore("pools").substore(buf);
+  psx::Fifo in = pool_store.create_fifo("pool_in");
+  psx::Fifo out = pool_store.create_fifo("pool_out");
+
+  switch ((ret = fork())) {
+  case -1:
+    throw psx::ErrnoException("could not create pool process");
+  case 0: {
+    psx::ReadEnd r = in.into_read(0);
+    psx::WriteEnd w = out.into_write(0);
+    int ret;
+    try {
+      ret = pool::pool_main(cfg.get<jms::JobsPerPool>(), std::move(r),
+                            std::move(w));
+    } catch (const std::exception &e) {
+      std::cerr << "ERROR: " << e.what() << std::endl;
+      ret = 1;
+    }
+
+    exit(ret);
+  }
+  default: {
+    pools.try_emplace(pools.end(), pool_id, pool_id, ret, out.into_read(),
+                      in.into_write());
+    auto &res = pools.at(pool_id);
+    last_pool.emplace(&res);
+    return res;
+  };
+  };
+}
+
 void Coord::run() {
-  // 0. It needs to wait on input from jms_in, as long as that pipe is open
-  // and shutdown/SIGTERM has not been sent
-  //    (we need a non-blocking fd that will signal when a client connection
-  //    joins)
-  // 1. It needs to read sentences from jms_in and return results to jms_out
-  //    (reading of sentences can happen not-atomically, and so we need a way
-  //    to keep state, while allowing for multiple consoles).
-  // 2. It needs to read and write to children processes
-  //    (this is also true here)
-  // 3. It needs to wait on pool processes to exit
-  //    (we need a signal handler for SIGCHLD that writes to an fd that we can
-  //    handle synchronously)
   for (;;) {
-    psx::Poll<std::string> input;
-    // TODO: perhaps don't move the async into the poller to allow for select as
-    // TODO: well as poll
-    input.subscribe(WaitForCommand(this->jms_in));
+    psx::Then<WaitReadCommand, WriteString> async(
+        WaitReadCommand(jms_in), [this](std::string &&cmd) {
+          psx::WriteEnd w = jms_out.into_write();
+          try {
+            auto res = parse_command(std::move(cmd));
+            return WriteString(res->execute(*this), std::move(w));
+          } catch (const error::CommandParseError &e) {
+            return WriteString(e.what(), std::move(w));
+          } catch (const error::CommandExecutionError &e) {
+            return WriteString(e.what(), std::move(w));
+          }
+        });
 
-    while (input.should_continue())
-      input.run_to_completion();
-
-    auto cmds = input.finish();
-    if (cmds.empty())
-      continue;
-
-    psx::WriteEnd res_write = jms_out.into_write(0);
-    std::string response = this->execute(std::move(cmds.back()));
-    std::istringstream is(response);
-    res_write.write_all(response.size());
-    res_write.write_from_istream(is, response.size());
+    psx::run_to_completion(std::move(async));
   }
 }
 

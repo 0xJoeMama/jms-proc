@@ -3,7 +3,7 @@
 #include "pipe.hpp"
 
 int main(void) {
-  psx::Fifo fifo("makis");
+  psx::Fifo fifo("makis", false);
   if (!fork()) {
     psx::WriteEnd w = fifo.into_write();
 
