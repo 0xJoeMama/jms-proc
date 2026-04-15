@@ -201,7 +201,6 @@ public:
   Completed(T t) : t(std::move(t)) {}
 
   PollStatus<T> poll(const struct pollfd &) override { return t; }
-
   void make_wakers(WakerCollector &) override {}
 };
 
@@ -234,6 +233,7 @@ void select_visit(const Visitor &visitor, A &&a) {
   }
 }
 
+// block on AsyncBase it until it is completed
 template <typename U> typename U::Result await(U &&it) {
   using T = typename U::Result;
 
@@ -274,7 +274,18 @@ template <typename U> typename U::Result await(U &&it) {
     it.make_wakers(collector);
   }
 
-  throw std::runtime_error(
-      "executed an async to completion without ever getting its result");
+  struct pollfd pfd{-1, 0, 0};
+
+  // TODO: this currently throws so we cannot have an infinitely polling async
+  // (which makes sense at least right now...)
+  return std::visit(
+      Match{
+          [](Continue &&) -> typename U::Result {
+            throw std::runtime_error(
+                "async had no wakers and did not completed instantly");
+          },
+          [](auto &&res) { return std::move(res); },
+      },
+      it.poll(pfd));
 }
 } // namespace psx

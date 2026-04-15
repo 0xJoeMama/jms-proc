@@ -6,22 +6,15 @@
 #include "poll.hpp"
 
 namespace jms {
-struct DuplexConnection {
+class EstablishConnection
+    : public psx::Async<psx::DuplexConnection, EstablishConnection> {
   psx::ReadEnd r;
-  psx::WriteEnd w;
+  psx::Fifo w;
 
-  DuplexConnection(psx::ReadEnd r, psx::WriteEnd w);
-
-  class EstablishConnection
-      : public psx::Async<DuplexConnection, EstablishConnection> {
-    psx::ReadEnd r;
-    psx::Fifo w;
-
-  public:
-    EstablishConnection(psx::Fifo &r, psx::Fifo &w);
-    psx::PollStatus<DuplexConnection> poll(const struct pollfd &) override;
-    void make_wakers(psx::WakerCollector &collector) override;
-  };
+public:
+  EstablishConnection(psx::Fifo &r, psx::Fifo &w);
+  psx::PollStatus<psx::DuplexConnection> poll(const struct pollfd &) override;
+  void make_wakers(psx::WakerCollector &collector) override;
 };
 
 class ReadString : public psx::Async<std::string, ReadString> {

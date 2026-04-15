@@ -3,7 +3,6 @@
 #include <signal.h>
 
 #include "except.hpp"
-#include "fd.hpp"
 #include "pipe.hpp"
 
 int main(void) {

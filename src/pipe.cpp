@@ -1,8 +1,12 @@
 #include <array>
+#include <csignal>
+#include <optional>
+#include <sstream>
 #include <sys/stat.h>
+#include <sys/wait.h>
 
+#include "except.hpp"
 #include "pipe.hpp"
-#include "fd.hpp"
 
 using namespace psx;
 
@@ -57,13 +61,9 @@ WriteEnd Pipe::into_write() {
   return std::move(write);
 }
 
-WriteEnd &Pipe::write_end() {
-  return write;
-}
+WriteEnd &Pipe::write_end() { return write; }
 
-ReadEnd &Pipe::read_end() {
-  return read;
-}
+ReadEnd &Pipe::read_end() { return read; }
 namespace {
 void mkfifo(const std::string &path, bool expect_there) {
   while (::mkfifo(path.c_str(), 0644) < 0) {
@@ -123,3 +123,75 @@ WriteEnd Fifo::into_write(int flags) {
   return open_fifo(this->path, flags | O_WRONLY);
 }
 
+DuplexConnection::DuplexConnection(psx::ReadEnd r, psx::WriteEnd w)
+    : r(std::move(r)), w(std::move(w)) {}
+
+Process::Process(psx::DuplexConnection conn,
+                 std::function<int(DuplexConnection &)> f)
+    : pid(-1), conn(std::move(conn)) {
+  switch ((pid = fork())) {
+  case -1:
+    throw ErrnoException("failed to create child process");
+  case 0: {
+    int res = f(this->conn);
+    exit(res);
+  } break;
+  }
+}
+
+Process::Process(Process &&other) noexcept
+    : pid(other.pid), conn(std::move(other.conn)) {
+  other.pid = -1;
+}
+
+int Process::wait() {
+  int res;
+  if (waitpid(pid, &res, 0) < 0) {
+    std::ostringstream os{};
+    os << "could not wait for child with pid: " << pid;
+    throw ErrnoException(os.str());
+  }
+
+  pid = -1;
+  // move conn here so we drop it
+  auto [r, w] = std::move(conn);
+
+  return res;
+}
+
+std::optional<int> Process::wait_no_block() {
+  int res;
+  pid_t stat;
+
+  if ((stat = waitpid(pid, &res, WNOHANG)) < 0) {
+    std::ostringstream os{};
+    os << "could not wait for child with pid: " << pid;
+    throw ErrnoException(os.str());
+  }
+
+  if (stat == 0)
+    return std::nullopt;
+
+  // move conn here so we drop it
+  auto [r, w] = std::move(conn);
+
+  pid = -1;
+  return std::make_optional(res);
+}
+
+Process::~Process() noexcept {
+  if (pid < 0)
+    return;
+
+  sigval_t v{};
+  if (sigqueue(pid, SIGTERM, v) < 0)
+    std::cerr << "WARN: failed to send termination signal to process " << pid
+              << std::endl;
+
+  try {
+    wait_no_block();
+  } catch (const ErrnoException &e) {
+    std::cerr << "WARN: could not wait for child process " << pid << ": "
+              << e.what() << std::endl;
+  }
+}

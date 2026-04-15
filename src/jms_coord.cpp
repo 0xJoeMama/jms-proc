@@ -8,58 +8,71 @@
 #include "command.hpp"
 #include "file_store.hpp"
 #include "jms_coord.hpp"
+#include "pipe.hpp"
 #include "poll.hpp"
 #include "signals.hpp"
 
 using namespace jms;
 
 namespace {
-class Executor : public CommandExecutor {};
+} // namespace
 
+namespace {
 void run(CoordConfig &cfg) {
-  Executor ex;
+  CoordExecutor ex;
   store::FileStore store(cfg.get<RunPath>());
 
   for (;;) {
     auto jms_in = store.create_fifo(config::JMS_IN);
     auto jms_out = store.create_fifo(config::JMS_OUT);
 
-    auto res = psx::await(psx::select(
-      DuplexConnection::EstablishConnection(jms_in, jms_out),
-      signals::OnSignal<SIGINT>()
-    ));
+    auto res = psx::await(psx::select(EstablishConnection(jms_in, jms_out),
+                                      signals::OnSignal<SIGINT>()));
 
-    psx::select_visit(Match {
-      [&] (DuplexConnection &&conn) {
-        auto [r, w] = std::move(conn);
+    psx::select_visit(
+        Match{
+            [&](psx::DuplexConnection &&conn) {
+              auto [r, w] = std::move(conn);
 
-        for (;;) {
-          try {
-            psx::await(ReadString(r).then([&, &w = w](std::string &&cmd) {
-              try {
-                auto parse_res = parse_command(std::move(cmd));
-                auto ex_res = parse_res->execute(ex);
-                return WriteString(ex_res, w);
-              } catch (const jms::error::CommandParseError &e) {
-                return WriteString(e.what(), w);
-              } catch (const jms::error::CommandExecutionError &e) {
-                return WriteString(e.what(), w);
+              for (;;) {
+                try {
+                  // read a string from the duplex conn
+                  psx::await(
+                      ReadString(r).then([&, &w = w](std::string &&cmd_str) {
+                        try {
+                          // parse that string as a coordinator command
+                          auto cmd = parse_command(std::move(cmd_str));
+
+                          // by blocking here, we guarantee that command are
+                          // executed atomically. That is only one command may
+                          // run from time to time and until it completes, no
+                          // other command may execute execute that command,
+                          // which returns an Async<string>
+                          auto async = cmd->execute(ex);
+                          // block on the execution of that async
+                          auto ex_res = psx::await(std::move(*async));
+
+                          // write the output to the duplex conn
+                          return WriteString(ex_res, w);
+                        } catch (const jms::error::CommandParseError &e) {
+                          return WriteString(e.what(), w);
+                        } catch (const jms::error::CommandExecutionError &e) {
+                          return WriteString(e.what(), w);
+                        }
+                      }));
+                } catch (const psx::EofException &e) {
+                  std::cout << "Client disconnected: " << e.what() << std::endl;
+                  break;
+                } catch (const psx::ErrnoException &e) {
+                  std::cerr << "ERROR: could not handle client: " << e.what()
+                            << std::endl;
+                  break;
+                }
               }
-            }));
-          } catch (const psx::EofException &e) {
-            std::cout << "Client disconnected: " << e.what() << std::endl;
-            break;
-          } catch (const psx::ErrnoException &e) {
-            std::cerr << "ERROR: could not handle client: " << e.what()
-                      << std::endl;
-            break;
-          }
-        }
-      },
-      [] (auto) {
-        std::cout << "HAHA I got a signal first" << std::endl;
-      },
-    }, std::move(res));
+            },
+            [](auto) { std::cout << "HAHA I got a signal first" << std::endl; },
+        },
+        std::move(res));
   }
 }
 } // namespace

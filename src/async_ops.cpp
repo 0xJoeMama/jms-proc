@@ -7,22 +7,19 @@
 using namespace psx;
 using namespace jms;
 
-DuplexConnection::DuplexConnection(psx::ReadEnd r, psx::WriteEnd w)
-    : r(std::move(r)), w(std::move(w)) {}
-
-DuplexConnection::EstablishConnection::EstablishConnection(psx::Fifo &r,
+EstablishConnection::EstablishConnection(psx::Fifo &r,
                                                            psx::Fifo &w)
     : r(r.into_read(O_NONBLOCK | O_CLOEXEC)), w(w) {}
 
-psx::PollStatus<DuplexConnection>
-DuplexConnection::EstablishConnection::poll(const struct pollfd &) {
+psx::PollStatus<psx::DuplexConnection>
+EstablishConnection::poll(const struct pollfd &) {
   return DuplexConnection{
       std::move(r),
       w.into_write(O_NONBLOCK | O_CLOEXEC),
   };
 }
 
-void DuplexConnection::EstablishConnection::make_wakers(
+void EstablishConnection::make_wakers(
     psx::WakerCollector &collector) {
   collector(pollfd{
       r.get_fd(),

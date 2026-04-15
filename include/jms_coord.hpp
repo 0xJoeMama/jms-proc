@@ -1,8 +1,12 @@
 #pragma once
 
+#include <optional>
 #include <sys/wait.h>
 
 #include "args.hpp"
+#include "executor.hpp"
+#include "file_store.hpp"
+#include "pipe.hpp"
 
 namespace jms {
 struct RunPath : RequiredArg<StringArg, RunPath> {
@@ -24,5 +28,47 @@ struct CoordConfig
       "-l <run-directory> -n <jobs-per-pool>";
   static constexpr const char *example = "-l . -n 12";
 };
-} // namespace jms
 
+int pool_main(psx::DuplexConnection &conn);
+
+class PoolHandle {
+  PoolId id;
+  psx::Process proc;
+
+  static psx::DuplexConnection make_connection(const store::FileStore &store,
+                                               PoolId id) {
+    std::ostringstream os{};
+    os << "pool-" << id;
+
+    auto pool_spec = store.substore(os.str());
+
+    auto r = pool_spec.create_fifo("in").into_read();
+    auto w = pool_spec.create_fifo("out").into_write();
+
+    return {std::move(r), std::move(w)};
+  }
+
+public:
+  PoolHandle(const store::FileStore &store, PoolId id)
+      : id(id), proc(make_connection(store, id), pool_main) {}
+
+  psx::Process &get_proc() { return proc; }
+  PoolId pool_id() { return id; }
+};
+
+class CoordExecutor : public CommandExecutor {
+  std::map<PoolId, PoolHandle> pools;
+  std::optional<PoolHandle *> last_pool;
+
+  JobId next_job;
+  PoolId next_pool;
+
+public:
+  CommandAsync<JobId> submit_job(std::optional<JobId> id, std::string path,
+                                 std::vector<std::string> args) override;
+  CommandAsync<JobStatus> status(JobId id) const override;
+  CommandAsync<std::vector<JobStatus>>
+  all_jobs(std::optional<ProcStatus> status) const override;
+  CommandAsync<std::monostate> send_signal(JobId id, int sig) override;
+};
+} // namespace jms

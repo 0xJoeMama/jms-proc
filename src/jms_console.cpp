@@ -38,7 +38,7 @@ struct ConsoleConfig : Command<ConsoleConfig, Field<WritePath>, Field<ReadPath>,
 };
 
 namespace {
-void handle_command(jms::DuplexConnection &conn, const std::string &op) {
+void handle_command(psx::DuplexConnection &conn, const std::string &op) {
   psx::await(jms::WriteString(op, conn.w));
 
   auto response = psx::await(jms::ReadString(conn.r));
@@ -49,7 +49,7 @@ std::ostream &print_prompt(size_t &line) {
   return std::cout << line++ << ": jms_console > ";
 }
 
-void send_operations(std::string &path, jms::DuplexConnection &conn,
+void send_operations(std::string &path, psx::DuplexConnection &conn,
                      size_t &command_cnt) {
   std::cout << "Operation file " << path << " was provided. Sending..."
             << std::endl;
@@ -69,7 +69,7 @@ void run(ConsoleConfig cfg) {
   auto r = psx::Fifo(cfg.get<ReadPath>(), true).into_read();
   auto w = psx::Fifo(cfg.get<WritePath>(), true).into_write();
 
-  jms::DuplexConnection conn(std::move(r), std::move(w));
+  psx::DuplexConnection conn(std::move(r), std::move(w));
   std::string ops(cfg.get<OpFile>());
 
   size_t command_cnt = 0;
