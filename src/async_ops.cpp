@@ -1,19 +1,40 @@
 #include <limits>
-#include <sstream>
 
 #include "async_ops.hpp"
 #include "except.hpp"
+#include "pipe.hpp"
 
 using namespace psx;
 using namespace jms;
 
-PollStatus<WaitReadCommand::Result>
-WaitReadCommand::poll(const struct pollfd &) {
+DuplexConnection::DuplexConnection(psx::ReadEnd r, psx::WriteEnd w)
+    : r(std::move(r)), w(std::move(w)) {}
+
+DuplexConnection::EstablishConnection::EstablishConnection(psx::Fifo &r,
+                                                           psx::Fifo &w)
+    : r(r.into_read(O_NONBLOCK | O_CLOEXEC)), w(w) {}
+
+psx::PollStatus<DuplexConnection>
+DuplexConnection::EstablishConnection::poll(const struct pollfd &) {
+  return DuplexConnection{
+      std::move(r),
+      w.into_write(O_NONBLOCK | O_CLOEXEC),
+  };
+}
+
+void DuplexConnection::EstablishConnection::make_wakers(
+    psx::WakerCollector &collector) {
+  collector(pollfd{
+      r.get_fd(),
+      POLLIN,
+      0,
+  });
+}
+
+PollStatus<ReadString::Result> ReadString::poll(const struct pollfd &) {
   if (cmd_len == 0) {
     try {
       r.read_all(cmd_len);
-    } catch (const EofException &) {
-      return Stop{};
     } catch (const ErrnoException &e) {
       switch (e.get_errno()) {
       case EAGAIN:
@@ -21,7 +42,7 @@ WaitReadCommand::poll(const struct pollfd &) {
       case EINTR:
         return Continue{};
       default:
-        return Stop{};
+        throw e;
       };
     }
   }
@@ -42,23 +63,20 @@ WaitReadCommand::poll(const struct pollfd &) {
       return Continue{};
     }
 
-    return Stop{};
-  } catch (const psx::EofException &) {
-    return Stop{};
+    throw e;
   }
 }
 
-void WaitReadCommand::make_wakers(psx::WakerCollector &collector) {
+void ReadString::make_wakers(WakerCollector &collector) {
   int fd = r.get_fd();
-  collector.push(pollfd{fd, POLLIN, 0});
+  collector(pollfd{fd, POLLIN, 0});
 }
 
-psx::PollStatus<WriteString::Result> WriteString::poll(const struct pollfd &) {
+PollStatus<WriteString::Result> WriteString::poll(const struct pollfd &) {
   if (curr == std::numeric_limits<size_t>::max()) {
     try {
       w.write_all(s.size());
-    } catch (const EofException &) {
-      return Stop{};
+      curr = 0;
     } catch (const ErrnoException &e) {
       switch (e.get_errno()) {
       case EAGAIN:
@@ -66,34 +84,30 @@ psx::PollStatus<WriteString::Result> WriteString::poll(const struct pollfd &) {
       case EINTR:
         return Continue{};
       default:
-        return Stop{};
+        throw e;
       };
     }
-
-    curr = 0;
   }
 
   if (curr == s.size())
-    return curr;
-
-  char buf[_POSIX_PIPE_BUF];
-  size_t stuff_left = std::min(static_cast<size_t>(_POSIX_PIPE_BUF), s.size() - curr);
-  std::memcpy(buf, s.data() + curr, stuff_left);
+    return std::monostate{};
 
   try {
-    curr += w.write(buf, stuff_left);
-    return Continue{};
+    curr += w.write(s.data() + curr, s.size() - curr);
+
+    if (curr < s.size())
+      return Continue{};
+    else
+      return std::monostate{};
   } catch (const ErrnoException &e) {
     if (e.get_errno() == EAGAIN || e.get_errno() == EINTR)
       return Continue{};
 
-    return Stop{};
-  } catch (const EofException &) {
-    return Stop{};
+    throw e;
   }
 }
 
 void WriteString::make_wakers(psx::WakerCollector &collector) {
   int fd = w.get_fd();
-  collector.push(pollfd{fd, POLLOUT, 0});
+  collector(pollfd{fd, POLLOUT, 0});
 }

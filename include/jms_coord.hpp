@@ -1,66 +1,28 @@
 #pragma once
 
-#include <cstdlib>
-#include <optional>
-#include <csignal>
-#include <map>
 #include <sys/wait.h>
 
-#include "config.hpp"
-#include "file_store.hpp"
-#include "pipe.hpp"
+#include "args.hpp"
 
 namespace jms {
-using PoolId = size_t;
-
-class PoolHandle {
-  PoolId pool_id;
-  pid_t pid;
-  psx::ReadEnd r;
-  psx::WriteEnd w;
-
-public:
-  PoolHandle(PoolId pool_id, pid_t pid, psx::ReadEnd &&r, psx::WriteEnd &&w)
-      : pool_id(pool_id), pid(pid), r(std::move(r)), w(std::move(w)) {}
-
-  ~PoolHandle() noexcept {
-    if (pid < 0) 
-      return;
-
-    if (sigqueue(pid, SIGTERM, {}) < 0) {
-      std::cerr << "WARN: failed to queue SIGTERM to pool process: " << strerror(errno) << std::endl;
-      return;
-    }
-
-    int exit;
-    int res;
-    while ((res = waitpid(pid, &exit, 0)) < 0 && errno == EINTR) 
-      ;
-
-    if (res < 0)
-      std::cerr << "WARN: could not wait for child process: " << strerror(errno) << std::endl;
-    else
-      std::cout << "Pool " << pool_id << " exited with status " << WEXITSTATUS(exit) << std::endl;
-  }
+struct RunPath : RequiredArg<StringArg, RunPath> {
+  static constexpr const char *name = "run-path";
+  static constexpr const char shortname = 'l';
+  static constexpr const char *desc = "Name of directory for runtime files";
 };
 
-class Coord {
-  const CoordConfig cfg;
-  store::FileStore store;
-  psx::ReadEnd jms_in;
-  psx::Fifo jms_out;
+struct JobsPerPool : RequiredArg<IntArg, JobsPerPool> {
+  static constexpr const char *name = "pool-jobs";
+  static constexpr const char shortname = 'n';
+  static constexpr const char *desc = "Number of jobs per job pool";
+};
 
-  std::map<PoolId, PoolHandle> pools;
-  std::optional<PoolHandle *> last_pool;
-  PoolId next_pool;
-  size_t next_job;
-
-public:
-  explicit Coord(CoordConfig &&cfg);
-
-  void run();
-  std::string execute(std::string &&command);
-  PoolHandle &new_pool();
+struct CoordConfig
+    : ::Command<CoordConfig, Field<RunPath>, Field<JobsPerPool>, Field<Help>> {
+  static constexpr const char *desc = "Job Management System Coordinator";
+  static constexpr const char *signature =
+      "-l <run-directory> -n <jobs-per-pool>";
+  static constexpr const char *example = "-l . -n 12";
 };
 } // namespace jms
 

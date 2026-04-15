@@ -1,20 +1,22 @@
 #pragma once
 
-#include "except.hpp"
 #include <algorithm>
 #include <functional>
 #include <map>
 #include <memory>
 #include <optional>
 #include <poll.h>
+#include <set>
 #include <stdexcept>
 #include <sys/poll.h>
 #include <variant>
 #include <vector>
 
+#include "except.hpp"
+#include "util.hpp"
+
 namespace psx {
 struct Continue {};
-struct Stop {};
 
 class WakerCollector {
 protected:
@@ -22,23 +24,12 @@ protected:
 
 public:
   WakerCollector(std::vector<struct pollfd> &pfds) : pfds(pfds) {}
-
-  virtual void push(const struct pollfd &pfd) { pfds.push_back(pfd); }
+  virtual void operator()(const struct pollfd &pfd) { pfds.push_back(pfd); }
 };
 
-template <typename T> using PollStatus = std::variant<T, Continue, Stop>;
+template <typename T> using PollStatus = std::variant<T, Continue>;
 
-template <typename T, typename U>
-PollStatus<U> status_cast(PollStatus<T> t) {
-  if (std::holds_alternative<Continue>(t))
-    return Continue{};
-  else if (std::holds_alternative<Stop>(t))
-    return Stop{};
-  else
-    throw std::runtime_error("invalid status cast");
-}
-
-template <typename T> class Async {
+template <typename T> class AsyncBase {
 public:
   using Result = T;
 
@@ -46,8 +37,13 @@ public:
   virtual void make_wakers(WakerCollector &collector) = 0;
 };
 
+template <typename T, typename Self> class Async : public AsyncBase<T> {
+public:
+  template <typename Fn> auto then(Fn fn);
+};
+
 template <typename F1, typename F2>
-class Then : public Async<typename F2::Result> {
+class Then : public Async<typename F2::Result, Then<F1, F2>> {
   using First = typename F1::Result;
   using Fn = std::function<F2(First &&)>;
 
@@ -66,8 +62,8 @@ public:
 
     auto status = f1.poll(fd);
 
-    if (std::holds_alternative<Continue>(status)) return Continue{};
-    if (std::holds_alternative<Stop>(status)) return Stop{};
+    if (std::holds_alternative<Continue>(status))
+      return Continue{};
 
     auto f2res = fn(std::move(std::get<First>(status)));
     f2.emplace(std::move(f2res));
@@ -83,8 +79,15 @@ public:
   }
 };
 
-template <typename U> class Join : public Async<std::vector<U>> {
-  std::vector<std::unique_ptr<Async<U>>> polls;
+template <typename T, typename Self>
+template <typename Fn>
+auto Async<T, Self>::then(Fn fn) {
+  using U = std::invoke_result_t<Fn, T &&>;
+  return Then<Self, U>(std::move(static_cast<Self &>(*this)), fn);
+}
+
+template <typename U> class Join : public Async<std::vector<U>, Join<U>> {
+  std::vector<std::unique_ptr<AsyncBase<U>>> polls;
   std::vector<U> results;
   std::multimap<int, size_t> rev;
 
@@ -97,8 +100,8 @@ template <typename U> class Join : public Async<std::vector<U>> {
               const WakerCollector &collector)
         : WakerCollector(collector), curr(curr), rev(rev) {}
 
-    void push(const struct pollfd &pfd) override {
-      WakerCollector::push(pfd);
+    void operator()(const struct pollfd &pfd) override {
+      WakerCollector::operator()(pfd);
       rev.emplace(curr, pfd.fd);
     }
   };
@@ -115,8 +118,7 @@ public:
     auto &poll = polls[it->second];
     auto res = poll->poll(fd);
 
-    if (std::holds_alternative<Continue>(res) ||
-        std::holds_alternative<Stop>(res))
+    if (std::holds_alternative<Continue>(res))
       return res;
 
     results.emplace_back(std::get<U>(std::move(res)));
@@ -140,8 +142,99 @@ public:
   }
 };
 
-template <typename U>
-std::optional<typename U::Result> run_to_completion(U &&it) {
+template <typename A, typename B>
+class Select
+    : public Async<std::variant<typename A::Result, typename B::Result>,
+                   Select<A, B>> {
+  A a;
+  B b;
+
+  std::set<int> a_fds;
+
+  struct FdCollector : WakerCollector {
+    std::set<int> &fds;
+
+    FdCollector(std::set<int> &fds, const WakerCollector &collector)
+        : WakerCollector(collector), fds(fds) {}
+
+    void operator()(const struct pollfd &pfd) override {
+      WakerCollector::operator()(pfd);
+      fds.insert(pfd.fd);
+    }
+  };
+
+public:
+  using Result = std::variant<typename A::Result, typename B::Result>;
+
+  Select(A &&a, B &&b) : a(std::move(a)), b(std::move(b)), a_fds{} {}
+
+  PollStatus<Result> poll(const struct pollfd &fd) override {
+    if (a_fds.find(fd.fd) != a_fds.end()) {
+      return std::visit(
+          Match{[](typename A::Result a) {
+                  return PollStatus<Result>(Result(std::move(a)));
+                },
+                [](Continue) { return PollStatus<Result>(Continue{}); }},
+          a.poll(fd));
+    } else {
+      return std::visit(
+          Match{[](typename B::Result b) {
+                  return PollStatus<Result>(Result(std::move(b)));
+                },
+                [](Continue) { return PollStatus<Result>(Continue{}); }},
+          b.poll(fd));
+    }
+  }
+
+  void make_wakers(WakerCollector &collector) override {
+    a_fds.clear();
+    FdCollector sub(a_fds, collector);
+    a.make_wakers(sub);
+    b.make_wakers(collector);
+  }
+};
+
+template <typename T> class Completed : public psx::Async<T, Completed<T>> {
+  T t;
+
+public:
+  Completed(T t) : t(std::move(t)) {}
+
+  PollStatus<T> poll(const struct pollfd &) override { return t; }
+
+  void make_wakers(WakerCollector &) override {}
+};
+
+template <typename... Ts> auto select(Ts &&...ts);
+
+template <typename A, typename B> auto select(A &&a, B &&b) {
+  return Select(std::move(a), std::move(b));
+}
+
+template <typename A, typename... Rest> auto select(A &&a, Rest &&...rest) {
+  return Select(std::move(a), select<Rest...>(std::move(rest)...));
+}
+
+namespace details {
+template <typename T> struct is_variant;
+
+template <typename... Ts>
+struct is_variant<std::variant<Ts...>> : std::true_type {};
+
+template <typename T> struct is_variant : std::false_type {};
+} // namespace details
+
+template <typename Visitor, typename A>
+void select_visit(const Visitor &visitor, A &&a) {
+  if constexpr (details::is_variant<A>::value) {
+    std::visit([&](auto &&v) { select_visit(visitor, std::move(v)); },
+               std::move(a));
+  } else {
+    visitor(std::move(a));
+  }
+}
+
+template <typename U> typename U::Result await(U &&it) {
   using T = typename U::Result;
 
   std::vector<struct pollfd> wakers;
@@ -149,7 +242,7 @@ std::optional<typename U::Result> run_to_completion(U &&it) {
 
   it.make_wakers(collector);
   while (!wakers.empty()) {
-    int evs = ::poll(wakers.data(), wakers.size(), -1);
+    int evs = ::ppoll(wakers.data(), wakers.size(), nullptr, nullptr);
     if (evs < 0 && errno != EINTR)
       throw ErrnoException("failed to poll file descriptor events");
 
@@ -159,12 +252,21 @@ std::optional<typename U::Result> run_to_completion(U &&it) {
       if (!curr.revents)
         continue;
 
-      auto res = it.poll(curr);
+      try {
+        auto res = it.poll(curr);
 
-      if (std::holds_alternative<T>(res)) {
-        return std::get<T>(res);
-      } else if (std::holds_alternative<Stop>(res)) {
-        return std::nullopt;
+        if (std::holds_alternative<T>(res))
+          return std::get<T>(std::move(res));
+
+      } catch (const ErrnoException &e) {
+        switch (e.get_errno()) {
+        case EINTR:
+          /* fallthrough */
+        case EAGAIN:
+          continue;
+        default:
+          throw e;
+        };
       }
     }
 
@@ -172,6 +274,7 @@ std::optional<typename U::Result> run_to_completion(U &&it) {
     it.make_wakers(collector);
   }
 
-  return std::nullopt;
+  throw std::runtime_error(
+      "executed an async to completion without ever getting its result");
 }
 } // namespace psx

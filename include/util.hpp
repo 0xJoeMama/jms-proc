@@ -9,5 +9,12 @@ namespace config {
   constexpr int OPEN_FDS_ON_WALK = 4;
   constexpr const char *JMS_IN = "jms_in";
   constexpr const char *JMS_OUT = "jms_out";
-  constexpr int POLL_TIMEOUT = 100;
 }
+
+template <typename...Ts>
+struct Match : Ts... {
+  using Ts::operator()...;
+};
+
+template <typename...Ts>
+Match(Ts...) -> Match<Ts...>;

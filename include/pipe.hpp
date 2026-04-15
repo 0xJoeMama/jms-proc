@@ -1,9 +1,7 @@
 #pragma once
 
-#include <array>
 #include <fcntl.h>
 #include <string>
-#include <sys/stat.h>
 #include <unistd.h>
 
 #include "fd.hpp"
@@ -41,6 +39,9 @@ public:
 
   ReadEnd into_read();
   WriteEnd into_write();
+
+  ReadEnd &read_end();
+  WriteEnd &write_end();
 
   template <size_t i> auto get() {
     if constexpr (i == 0) {

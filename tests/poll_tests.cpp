@@ -5,34 +5,27 @@
 #include <sys/poll.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <variant>
 
-#include "except.hpp"
 #include "pipe.hpp"
 #include "poll.hpp"
 
-template <typename T> class ReadItem : public psx::Async<T> {
+template <typename T> class ReadItem : public psx::Async<T, ReadItem<T>> {
   psx::ReadEnd r;
 
 public:
   ReadItem(psx::ReadEnd &&r) : r(std::move(r)) {}
 
   psx::PollStatus<T> poll(const struct pollfd &) override {
-    try {
-      T t;
-      r.read_all<T>(t);
-      std::cout << "Running we got " << t << std::endl;
-      return std::move(t);
-    } catch (const psx::EofException &) {
-      return psx::Stop{};
-    } catch (const psx::ErrnoException &pe) {
-      std::cerr << "Failed to read anything" << std::endl;
-      return psx::Stop{};
-    }
+    T t;
+    r.read_all<T>(t);
+    std::cout << "Running we got " << t << std::endl;
+    return std::move(t);
   }
 
   void make_wakers(psx::WakerCollector &collector) override {
     int fd = r.get_fd();
-    collector.push(pollfd{
+    collector(pollfd{
         fd,
         POLLIN,
         0,
@@ -54,9 +47,18 @@ int main(void) {
   psx::ReadEnd r = p.into_read();
   ReadItem<int> it(std::move(r));
 
-  auto res = psx::run_to_completion(std::move(it));
+  auto res = psx::await(std::move(it));
+  auto resa = psx::await(psx::select(
+      ReadItem<int>(std::move(r)), ReadItem<float>(std::move(r)),
+      ReadItem<long>(std::move(r)), ReadItem<std::string>(std::move(r))));
 
-  assert(*res == 674269);
+  psx::select_visit(Match{[](int) { return std::monostate{}; },
+                          [](long) { return std::monostate{}; },
+                          [](float) { return std::monostate{}; },
+                          [](std::string) { return std::monostate{}; }},
+                    std::move(resa));
+
+  assert(res == 674269);
 
   return 0;
 }

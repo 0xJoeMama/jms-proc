@@ -605,3 +605,10 @@ struct Command : public ChoiceArg<Self, Fields...> {
     }
   }
 };
+
+// Default help option that is commonly used
+struct Help : NamedArg<FlagArg, Help> {
+  static constexpr const char *name = "help";
+  static constexpr const char shortname = 'h';
+  static constexpr const char *desc = "Print this help message";
+};

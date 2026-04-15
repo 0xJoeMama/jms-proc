@@ -2,8 +2,11 @@
 
 #include <chrono>
 #include <memory>
+#include <sstream>
+#include <stdexcept>
+#include <vector>
 
-#include "jms_coord.hpp"
+#include "util.hpp"
 
 namespace jms {
 namespace error {
@@ -42,6 +45,10 @@ public:
   std::istringstream &stream() { return is; }
 };
 
+class CommandExecutor {
+public:
+};
+
 class Command {
 public:
   Command(std::string_view name, PeekableStream &peek) {
@@ -50,14 +57,11 @@ public:
     if (!(peek.stream() >> s))
       throw error::CommandParseError("empty command was sent");
 
-    std::cout << "Want " << name << " got " << s << std::endl;
     if (s != name)
       throw error::NextCommand();
   }
 
-  virtual std::string execute(Coord &) {
-    return "execution not implemented yet";
-  }
+  virtual std::string execute(CommandExecutor &ex) = 0;
 
   virtual ~Command() {}
 };
@@ -80,6 +84,10 @@ public:
     if (!peek.stream().eof())
       throw error::CommandParseError("failed to collect job arguments");
   }
+
+  std::string execute(CommandExecutor &) override {
+    todo("Submit::execute");
+  }
 };
 
 class JobIdCommand : public Command {
@@ -99,6 +107,10 @@ public:
 
 struct Status : public JobIdCommand {
   Status(PeekableStream &peek) : JobIdCommand("status", peek) {}
+  
+  std::string execute(CommandExecutor &) override {
+    todo("Status::execute");
+  }
 };
 
 namespace chr = std::chrono;
@@ -117,31 +129,59 @@ public:
       throw error::CommandParseError("expected eof or last n seconds");
     }
   }
+
+  std::string execute(CommandExecutor &) override {
+    todo("StatusAll::execute");
+  }
 };
 
 struct ShowActive : public Command {
   ShowActive(PeekableStream &peek) : Command("show-active", peek) {}
+
+  std::string execute(CommandExecutor &) override {
+    todo("ShowActive::execute");
+  }
 };
 
 struct ShowPools : public Command {
   ShowPools(PeekableStream &peek) : Command("show-pools", peek) {}
+
+  std::string execute(CommandExecutor &) override {
+    todo("ShowPools::execute");
+  }
 };
 
 struct ShowFinished : public Command {
   ShowFinished(PeekableStream &peek) : Command("show-finished", peek) {}
+
+  std::string execute(CommandExecutor &) override {
+    todo("ShowFinished::execute");
+  }
 };
 
 struct Suspend : public JobIdCommand {
 public:
   Suspend(PeekableStream &peek) : JobIdCommand("suspend", peek) {}
+
+  std::string execute(CommandExecutor &) override {
+    todo("Suspend::execute");
+  }
 };
 
 struct Resume : public JobIdCommand {
   Resume(PeekableStream &peek) : JobIdCommand("resume", peek) {}
+
+  std::string execute(CommandExecutor &) override {
+    todo("Resume::execute");
+  }
 };
 
 struct Shutdown : public Command {
   Shutdown(PeekableStream &peek) : Command("shutdown", peek) {}
+
+  std::string execute(CommandExecutor &) override {
+    todo("Shutdown::execute");
+  }
 };
 
 std::unique_ptr<jms::Command> parse_command(std::string &&cmd);

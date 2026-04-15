@@ -115,8 +115,10 @@ Job::Job(pid_t pid)
 
 int pool::pool_main(size_t n, psx::ReadEnd r, psx::WriteEnd w) {
   JobPool pool(n);
-  (void)w;
 
-  while (1)
-    auto res = psx::run_to_completion(jms::WaitReadCommand(r));
+  while (1) {
+    psx::await(jms::ReadString(r).then([&] (std::string &&cmd) {
+      return jms::WriteString(cmd, w);
+    }));
+  }
 }

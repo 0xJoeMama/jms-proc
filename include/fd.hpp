@@ -23,6 +23,7 @@ public:
     if (fd < 0)
       return;
 
+    // TODO: move this out of here...
     if (close(fd) < 0)
       std::cerr << strerror(errno) << std::endl;
   }

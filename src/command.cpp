@@ -25,10 +25,8 @@ const std::array<CommandParser, 9> PARSERS{
 std::unique_ptr<jms::Command> jms::parse_command(std::string &&cmd) {
   std::istringstream is(std::move(cmd));
 
-  size_t iter = 0;
   for (const CommandParser &parser : PARSERS) {
     try {
-      std::cout << "Pass " << ++iter << std::endl;
       PeekableStream peek(is);
       return parser(peek);
     } catch (const jms::error::NextCommand &) {

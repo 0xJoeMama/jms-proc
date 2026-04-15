@@ -1,8 +1,8 @@
+#include <array>
+#include <sys/stat.h>
+
 #include "pipe.hpp"
 #include "fd.hpp"
-
-#include <tuple>
-#include <type_traits>
 
 using namespace psx;
 
@@ -57,6 +57,13 @@ WriteEnd Pipe::into_write() {
   return std::move(write);
 }
 
+WriteEnd &Pipe::write_end() {
+  return write;
+}
+
+ReadEnd &Pipe::read_end() {
+  return read;
+}
 namespace {
 void mkfifo(const std::string &path, bool expect_there) {
   while (::mkfifo(path.c_str(), 0644) < 0) {
@@ -115,3 +122,4 @@ ReadEnd Fifo::into_read(int flags) {
 WriteEnd Fifo::into_write(int flags) {
   return open_fifo(this->path, flags | O_WRONLY);
 }
+
