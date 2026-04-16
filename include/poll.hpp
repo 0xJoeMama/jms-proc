@@ -5,14 +5,15 @@
 #include <map>
 #include <memory>
 #include <optional>
-#include <poll.h>
 #include <set>
 #include <stdexcept>
+#include <sys/eventfd.h>
 #include <sys/poll.h>
 #include <variant>
 #include <vector>
 
 #include "except.hpp"
+#include "pipe.hpp"
 #include "util.hpp"
 
 namespace psx {
@@ -40,6 +41,23 @@ public:
 template <typename T, typename Self> class Async : public AsyncBase<T> {
 public:
   template <typename Fn> auto then(Fn fn);
+  template <typename Fn> auto map(Fn fn);
+};
+
+template <typename T> class Dynamic : public Async<T, Dynamic<T>> {
+  std::unique_ptr<AsyncBase<T>> base;
+
+public:
+  template <typename U>
+  Dynamic(U &&base) : base(std::make_unique<U>(std::move(base))) {}
+
+  PollStatus<T> poll(const struct pollfd &fd) override {
+    return base->poll(fd);
+  }
+
+  void make_wakers(WakerCollector &collector) override {
+    base->make_wakers(collector);
+  }
 };
 
 template <typename F1, typename F2>
@@ -79,11 +97,42 @@ public:
   }
 };
 
+template <typename F, typename Fn>
+class Map : public Async<std::invoke_result_t<Fn, typename F::Result &&>,
+                         Map<F, Fn>> {
+  F f;
+  Fn fn;
+
+public:
+  using Result = std::invoke_result_t<Fn, typename F::Result &&>;
+
+  Map(F &&prev, Fn fn) : f(std::move(prev)), fn(std::move(fn)) {}
+
+  PollStatus<Result> poll(const struct pollfd &fd) override {
+    return std::visit(
+        Match{
+            [](Continue) { return PollStatus<Result>(Continue{}); },
+            [&](auto &&it) { return PollStatus<Result>(fn(std::move(it))); },
+        },
+        f.poll(fd));
+  }
+
+  void make_wakers(WakerCollector &collector) override {
+    f.make_wakers(collector);
+  }
+};
+
 template <typename T, typename Self>
 template <typename Fn>
 auto Async<T, Self>::then(Fn fn) {
   using U = std::invoke_result_t<Fn, T &&>;
   return Then<Self, U>(std::move(static_cast<Self &>(*this)), fn);
+}
+
+template <typename T, typename Self>
+template <typename Fn>
+auto Async<T, Self>::map(Fn fn) {
+  return Map<Self, Fn>(std::move(static_cast<Self &>(*this)), fn);
 }
 
 template <typename U> class Join : public Async<std::vector<U>, Join<U>> {
@@ -109,6 +158,10 @@ template <typename U> class Join : public Async<std::vector<U>, Join<U>> {
 public:
   using Result = std::vector<U>;
 
+  template <typename T> void push(T &&it) {
+    polls.emplace_back(std::make_unique<T>(std::move(it)));
+  }
+
   PollStatus<Result> poll(const struct pollfd &fd) override {
     // we received an event for fd->fd
     auto it = rev.find(fd.fd);
@@ -119,7 +172,7 @@ public:
     auto res = poll->poll(fd);
 
     if (std::holds_alternative<Continue>(res))
-      return res;
+      return Continue {};
 
     results.emplace_back(std::get<U>(std::move(res)));
 
@@ -136,8 +189,8 @@ public:
     rev.clear();
 
     for (size_t i = 0; i < polls.size(); i++) {
-      Collector proxy(collector, i, rev);
-      polls[i].make_wakers(proxy);
+      Collector proxy(i, rev, collector);
+      polls[i]->make_wakers(proxy);
     }
   }
 };
@@ -196,12 +249,21 @@ public:
 
 template <typename T> class Completed : public psx::Async<T, Completed<T>> {
   T t;
+  OwnedFd ev_fd;
 
 public:
-  Completed(T t) : t(std::move(t)) {}
+  Completed(T t)
+      : t(std::move(t)), ev_fd(eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC)) {
+    uint64_t i = 1;
+    if (write(ev_fd.get_fd(), &i, sizeof(uint64_t)) < 0)
+      throw ErrnoException(
+          "could not create event file descriptor for completed future");
+  }
 
-  PollStatus<T> poll(const struct pollfd &) override { return t; }
-  void make_wakers(WakerCollector &) override {}
+  PollStatus<T> poll(const struct pollfd &) override { return std::move(t); }
+  void make_wakers(WakerCollector &collector) override {
+    collector(pollfd{ev_fd.get_fd(), POLLIN, 0});
+  }
 };
 
 template <typename... Ts> auto select(Ts &&...ts);

@@ -4,7 +4,7 @@
 #include <sstream>
 #include <stdexcept>
 
-#include "executor.hpp"
+#include "poll.hpp"
 
 namespace jms {
 namespace error {
@@ -53,7 +53,7 @@ public:
       throw error::NextCommand();
   }
 
-  virtual CommandAsync<std::string> execute(Exec &ex) = 0;
+  virtual psx::Dynamic<std::string> execute(Exec &ex) = 0;
   virtual ~Command() {}
 };
 
@@ -73,28 +73,24 @@ public:
 };
 
 template <typename Exec>
-using CommandParser =
-    std::function<std::unique_ptr<jms::Command<Exec>>(PeekableStream &)>;
+std::unique_ptr<jms::Command<Exec>> parse_command(PeekableStream peek) {
+  throw error::UnknownCommand(peek.stream().str());
+}
 
-template <typename T, typename Exec> struct MakeParser : CommandParser<Exec> {
-  std::unique_ptr<jms::Command<Exec>> operator()(PeekableStream &peek) const {
-    return std::make_unique<T>(T(peek));
+template <typename Exec, typename A, typename... Rest>
+std::unique_ptr<jms::Command<Exec>> parse_command(PeekableStream peek) {
+  try {
+    PeekableStream p(peek);
+    return std::make_unique<A>(peek);
+  } catch (const error::NextCommand &) {
+    return parse_command<Exec, Rest...>(peek);
   }
-};
+}
 
-template <typename Parser>
-std::unique_ptr<jms::Command<typename Parser::Exec>>
-parse_command(std::string cmd) {
+template <typename Exec, typename... Commands>
+std::unique_ptr<jms::Command<Exec>> parse_command(std::string cmd) {
   std::istringstream is(std::move(cmd));
 
-  for (const auto &parser : Parser::parsers) {
-    try {
-      PeekableStream peek(is);
-      return parser(peek);
-    } catch (const jms::error::NextCommand &) {
-    }
-  }
-
-  throw jms::error::UnknownCommand(is.str());
+  return parse_command<Exec, Commands...>(PeekableStream(is));
 }
 } // namespace jms

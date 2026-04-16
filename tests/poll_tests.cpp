@@ -60,5 +60,10 @@ int main(void) {
 
   assert(res == 674269);
 
+  it.map([](auto &&) {
+    std::cout << "Magic happened" << std::endl;
+    return std::monostate{};
+  });
+
   return 0;
 }
