@@ -10,7 +10,7 @@ psx::Dynamic<std::string> ShowActive::execute(CoordExecutor &ex) {
   psx::Join<std::string> active;
   for (auto &[_, pool] : ex.get_pools()) {
     // send message to all pools
-    active.push(jms::send_command(pool.get_proc().get_conn(), "show-active"));
+    active.push(jms::send_command(pool.get_conn(), "show-active"));
   }
 
   return active.map([](auto &&actives) {
@@ -39,10 +39,8 @@ psx::Dynamic<std::string> ShowFinished::execute(CoordExecutor &ex) {
 
       active.push(psx::Completed(os.str()));
     } else {
-      auto &conn = iter->second.get_proc().get_conn();
-
       // send message to all pools
-      active.push(jms::send_command(conn, "show-finished"));
+      active.push(jms::send_command(iter->second.get_conn(), "show-finished"));
     }
   }
 
@@ -64,7 +62,7 @@ psx::Dynamic<std::string> Resume::execute(CoordExecutor &ex) {
     return psx::Completed<std::string>(
         sutil::concat("Sent resume signal to job", job_id));
 
-  return jms::send_command(target_pool->get_proc().get_conn(),
+  return jms::send_command(target_pool->get_conn(),
                            sutil::concat("resume", job_id))
       .map([this](auto) {
         return sutil::concat("Sent resume signal to job", job_id);
@@ -79,7 +77,7 @@ psx::Dynamic<std::string> Suspend::execute(CoordExecutor &ex) {
     return psx::Completed<std::string>(
         sutil::concat("Sent suspend signal to job", job_id));
 
-  return jms::send_command(target_pool->get_proc().get_conn(),
+  return jms::send_command(target_pool->get_conn(),
                            sutil::concat("suspend", job_id))
       .map([this](auto) {
         return sutil::concat("Sent suspend signal to job", job_id);

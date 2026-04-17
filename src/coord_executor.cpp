@@ -1,7 +1,38 @@
 #include "jms_coord.hpp"
+#include "pipe.hpp"
 #include "poll.hpp"
 
 using namespace jms;
+
+PoolHandle PoolHandle::make_pool(const store::FileStore &store, PoolId id) {
+  auto substore = store.substore(sutil::concat<'-'>("pool", id));
+
+  auto fr = substore.create_fifo("in");
+  auto fw = substore.create_fifo("out");
+
+  psx::Process proc([&](auto) {
+    auto r = fr.into_read(0);
+    auto w = fw.into_write(0);
+
+    psx::DuplexConnection conn(std::move(r), std::move(w));
+    return pool_main(store, conn);
+  });
+
+  auto w = fr.into_write(O_CLOEXEC);
+  auto r = fw.into_read(O_CLOEXEC);
+
+  if (fcntl(w.get_fd(), F_SETFL, O_NONBLOCK | O_CLOEXEC) < 0 ||
+      fcntl(r.get_fd(), F_SETFL, O_NONBLOCK | O_CLOEXEC) < 0)
+    throw psx::ErrnoException(
+        sutil::concat("failed to set communication channel with pool",
+                      proc.get_pid(), "to non-blocking"));
+
+  return PoolHandle{
+      id,
+      std::move(proc),
+      {std::move(r), std::move(w)},
+  };
+}
 
 PoolHandle *CoordExecutor::pool_for_job(JobId id) {
   auto iter = pools.find(id / jobs_per_pool);
@@ -27,7 +58,7 @@ psx::Dynamic<std::pair<JobId, pid_t>>
 CoordExecutor::spawn_on_last_pool(JobId job_id, std::string path,
                                   std::vector<std::string> args) {
   return jms::send_command(
-             last_pool->get_proc().get_conn(),
+             last_pool->get_conn(),
              sutil::concat("submit", job_id, path, sutil::concat_iter(args)))
       .map([job_id](std::string &&res) {
         std::istringstream is(std::move(res));

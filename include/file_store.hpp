@@ -16,7 +16,7 @@ public:
   Dir(const Dir &) = delete;
   ~Dir() noexcept;
 
-  Dir& operator=(const Dir &) = delete;
+  Dir &operator=(const Dir &) = delete;
   const std::string &get_root_path() const { return root; }
 
   int get_dirfd() const { return dirfd(dir); }
@@ -29,6 +29,8 @@ class FileStore {
 
 public:
   explicit FileStore(std::string_view root_path);
+
+  const std::string &get_root() const { return root_dir.get_root_path(); }
   psx::Fifo create_fifo(std::string_view name) const;
   FileStore substore(std::string_view name) const;
 };

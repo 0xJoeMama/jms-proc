@@ -1,30 +1,84 @@
 #include <cassert>
+#include <ctime>
 #include <sys/wait.h>
 #include <unistd.h>
 
 #include "async_ops.hpp"
 #include "command.hpp"
 #include "executor.hpp"
-#include "jms_coord.hpp"
+#include "file_store.hpp"
 #include "pipe.hpp"
 
 using namespace jms;
 
 namespace {
 class JobHandle {
-  JobId id;
-  ProcStatus status;
   psx::Process proc;
 
+  static std::string make_output_dir(JobId job_id, pid_t pid) {
+    std::ostringstream os{};
+
+    std::time_t time = std::time(nullptr);
+    char time_string[std::size("yyyymmdd_hhmmss")];
+    std::strftime(time_string, sizeof(time_string), "%Y%m%e_%H%M%S",
+                  std::localtime(&time));
+    os << "outputs_" << job_id << "_" << pid << "_" << time_string;
+
+    return os.str();
+  }
+
 public:
-  JobHandle(store::FileStore &store, JobId id, std::string path,
+  JobHandle(const store::FileStore &store, JobId id, std::string path,
             std::vector<std::string> args)
-      : id(id), status(ProcStatus::Active) {}
+      : proc([&](auto pid) {
+          // first set-up file descriptors
+          store::FileStore root = store.substore(make_output_dir(id, pid));
+
+          if (chdir(root.get_root().c_str()) < 0)
+            throw psx::ErrnoException(
+                sutil::concat("failed to chdir into", root.get_root()));
+
+          std::cerr << "Successfully chdir'ed into " << root.get_root().c_str()
+                    << std::endl;
+          if (close(STDOUT_FILENO) < 0)
+            throw psx::ErrnoException(
+                sutil::concat("failed to close stdout for process", pid));
+          if (close(STDERR_FILENO) < 0)
+            throw psx::ErrnoException(
+                sutil::concat("failed to close stderr for process", pid));
+
+          std::string fmt = sutil::concat<'_'>("stdout", id);
+          psx::OwnedFd std_out(open(fmt.c_str(), O_WRONLY | O_CREAT, 0644));
+          fmt = sutil::concat<'_'>("stderr", id);
+          psx::OwnedFd std_err(open(fmt.c_str(), O_WRONLY | O_CREAT, 0644));
+
+          // setup arguments and call into execve
+          std::vector<char *> argv;
+
+          argv.push_back(const_cast<char *>(path.c_str()));
+
+          for (const auto &i : args)
+            argv.push_back(const_cast<char *>(i.c_str()));
+
+          argv.push_back(nullptr);
+
+          ::execvp(path.c_str(), argv.data());
+          throw psx::ErrnoException(sutil::concat("failed to execute program",
+                                                  path, "with arguments",
+                                                  sutil::concat_iter(args)));
+
+          return 1;
+        }) {}
+
+  psx::Process &get_proc() { return proc; }
 };
 
 struct PoolExecutor {
   std::map<JobId, JobHandle> children;
   std::map<pid_t, JobHandle *> by_pid;
+  const store::FileStore &root_store;
+
+  PoolExecutor(const store::FileStore &root_store) : root_store(root_store) {}
 };
 
 struct Submit : JobIdCommand<PoolExecutor> {
@@ -41,21 +95,27 @@ struct Submit : JobIdCommand<PoolExecutor> {
   }
 
   psx::Dynamic<std::string> execute(PoolExecutor &ex) override {
-    return "SUBMIT";
+    ex.children.emplace(job_id, JobHandle(ex.root_store, job_id,
+                                          std::move(path), std::move(args)));
+    auto &new_chld = ex.children.at(job_id);
+    pid_t pid = new_chld.get_proc().get_pid();
+    ex.by_pid.emplace(pid, &new_chld);
+
+    return psx::Completed<std::string>(std::to_string(pid));
   }
 };
 
 struct Suspend : JobIdCommand<PoolExecutor> {
   Suspend(PeekableStream &peek) : JobIdCommand<PoolExecutor>("suspend", peek) {}
   psx::Dynamic<std::string> execute(PoolExecutor &) override {
-    return "SUSPEND";
+    return psx::Completed<std::string>("SUSPEND");
   }
 };
 
 struct Resume : JobIdCommand<PoolExecutor> {
   Resume(PeekableStream &peek) : JobIdCommand<PoolExecutor>("resume", peek) {}
   psx::Dynamic<std::string> execute(PoolExecutor &) override {
-    return "RESUME";
+    return psx::Completed<std::string>("RESUME");
   }
 };
 
@@ -74,18 +134,18 @@ struct ShowFinished : jms::Command<PoolExecutor> {
 };
 } // namespace
 
-int jms::pool_main(psx::DuplexConnection &conn) {
+namespace jms {
+int pool_main(const store::FileStore &root_store, psx::DuplexConnection &conn) {
   auto [r, w] = std::move(conn);
 
-  PoolExecutor ex;
+  PoolExecutor ex(root_store);
 
   while (1) {
     auto cmdstr = psx::await(ReadString(r));
 
     try {
-      auto cmd =
-          jms::parse_command<PoolExecutor, Submit, ProcCount, Resume, Suspend>(
-              std::move(cmdstr));
+      auto cmd = jms::parse_command<PoolExecutor, Submit, Resume, Suspend>(
+          std::move(cmdstr));
 
       psx::await(cmd->execute(ex).then(
           [&w = w](auto &&res) { return WriteString(std::move(res), w); }));
@@ -96,3 +156,4 @@ int jms::pool_main(psx::DuplexConnection &conn) {
     }
   }
 }
+} // namespace jms

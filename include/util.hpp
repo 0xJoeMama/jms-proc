@@ -29,9 +29,17 @@ template <typename I> std::string concat_iter(const I &v) {
   return os.str();
 }
 
-template <typename... Args> std::string concat(const Args &...args) {
+template <char delim = ' ', typename... Args>
+std::string concat(const Args &...args) {
   std::ostringstream os{};
-  ([&]() { os << args << " "; }(), ...);
+  (
+      [&]() {
+        if (os.tellp() != 0)
+          os << delim;
+
+        os << args;
+      }(),
+      ...);
   return os.str();
 }
 } // namespace sutil

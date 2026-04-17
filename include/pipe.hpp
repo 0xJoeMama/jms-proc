@@ -134,21 +134,15 @@ struct DuplexConnection {
 
 class Process {
   pid_t pid;
-  DuplexConnection conn;
-
-  Process(pid_t pid, DuplexConnection conn) : pid(pid), conn(std::move(conn)) {}
 
 public:
-  static Process fork(std::function<Fifo(std::string_view)> make_fifo,
-                      std::function<int(DuplexConnection &)> f);
-
+  explicit Process(std::function<int(pid_t)> f);
   Process(Process &&) noexcept;
 
   // blocking version
   int wait();
   std::optional<int> wait_no_block();
 
-  DuplexConnection &get_conn() { return conn; }
   pid_t get_pid() const { return pid; }
 
   ~Process() noexcept;

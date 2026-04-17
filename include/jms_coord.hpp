@@ -31,28 +31,30 @@ struct CoordConfig
   static constexpr const char *example = "-l . -n 12";
 };
 
-int pool_main(psx::DuplexConnection &conn);
+int pool_main(const store::FileStore &store, psx::DuplexConnection &conn);
 
 class PoolHandle {
   PoolId id;
   psx::Process proc;
+  psx::DuplexConnection conn;
+
+  static PoolHandle make_pool(const store::FileStore &store, PoolId id);
+
+  PoolHandle(PoolId id, psx::Process proc, psx::DuplexConnection conn)
+      : id(id), proc(std::move(proc)), conn(std::move(conn)) {}
 
 public:
   PoolHandle(const store::FileStore &store, PoolId id)
-      : id(id), proc(psx::Process::fork(
-                    [&](std::string_view path) {
-                      std::ostringstream os{};
-                      os << "pool-" << id;
-                      return store.substore(os.str()).create_fifo(path);
-                    },
-                    pool_main)) {}
+      : PoolHandle(make_pool(store, id)) {}
 
   psx::Process &get_proc() { return proc; }
+  psx::DuplexConnection &get_conn() { return conn; }
   PoolId pool_id() { return id; }
 
   auto get_proc_count() {
-    return jms::send_command(proc.get_conn(), "proc-count")
-        .map([](std::string res) { return std::stoi(res); });
+    return jms::send_command(conn, "proc-count").map([](std::string res) {
+      return std::stoi(res);
+    });
   }
 };
 
