@@ -1,14 +1,12 @@
-#include <limits>
-
 #include "async_ops.hpp"
 #include "except.hpp"
 #include "pipe.hpp"
+#include "poll.hpp"
 
 using namespace psx;
 using namespace jms;
 
-EstablishConnection::EstablishConnection(psx::Fifo &r,
-                                                           psx::Fifo &w)
+EstablishConnection::EstablishConnection(psx::Fifo &r, psx::Fifo &w)
     : r(r.into_read(O_NONBLOCK | O_CLOEXEC)), w(w) {}
 
 psx::PollStatus<psx::DuplexConnection>
@@ -19,8 +17,7 @@ EstablishConnection::poll(const struct pollfd &) {
   };
 }
 
-void EstablishConnection::make_wakers(
-    psx::WakerCollector &collector) {
+void EstablishConnection::make_wakers(psx::WakerCollector &collector) {
   collector(pollfd{
       r.get_fd(),
       POLLIN,
@@ -70,7 +67,7 @@ void ReadString::make_wakers(WakerCollector &collector) {
 }
 
 PollStatus<WriteString::Result> WriteString::poll(const struct pollfd &) {
-  if (curr == std::numeric_limits<size_t>::max()) {
+  if (curr == MAX) {
     try {
       w.write_all(s.size());
       curr = 0;
@@ -107,4 +104,11 @@ PollStatus<WriteString::Result> WriteString::poll(const struct pollfd &) {
 void WriteString::make_wakers(psx::WakerCollector &collector) {
   int fd = w.get_fd();
   collector(pollfd{fd, POLLOUT, 0});
+}
+
+Then<WriteString, ReadString> jms::send_command(psx::DuplexConnection &conn,
+                                                std::string cmd) {
+  return WriteString(std::move(cmd), conn.w).then([&](auto) {
+    return ReadString(conn.r);
+  });
 }

@@ -163,26 +163,29 @@ public:
   }
 
   PollStatus<Result> poll(const struct pollfd &fd) override {
+    if (polls.empty())
+      return std::move(results);
+
     // we received an event for fd->fd
     auto it = rev.find(fd.fd);
     if (it == rev.end())
-      throw std::runtime_error("invalid file descriptor was provided to poll");
+      throw std::runtime_error("invalid file descriptor was provided to join");
 
     auto &poll = polls[it->second];
     auto res = poll->poll(fd);
 
     if (std::holds_alternative<Continue>(res))
-      return Continue {};
+      return Continue{};
 
     results.emplace_back(std::get<U>(std::move(res)));
 
     std::swap(polls.back(), polls[it->second]);
     polls.pop_back();
 
-    if (polls.size())
-      return Continue{};
-    else
+    if (polls.empty())
       return std::move(results);
+    else
+      return Continue{};
   }
 
   void make_wakers(WakerCollector &collector) override {
@@ -303,6 +306,8 @@ template <typename U> typename U::Result await(U &&it) {
   WakerCollector collector(wakers);
 
   it.make_wakers(collector);
+  // TODO: perhaps make this run at least once for all async to allow the to
+  // TODO: properly poll the first time around
   while (!wakers.empty()) {
     int evs = ::ppoll(wakers.data(), wakers.size(), nullptr, nullptr);
     if (evs < 0 && errno != EINTR)
@@ -319,7 +324,6 @@ template <typename U> typename U::Result await(U &&it) {
 
         if (std::holds_alternative<T>(res))
           return std::get<T>(std::move(res));
-
       } catch (const ErrnoException &e) {
         switch (e.get_errno()) {
         case EINTR:

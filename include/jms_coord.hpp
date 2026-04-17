@@ -1,6 +1,5 @@
 #pragma once
 
-#include <optional>
 #include <sys/wait.h>
 
 #include "args.hpp"
@@ -9,6 +8,7 @@
 #include "executor.hpp"
 #include "file_store.hpp"
 #include "pipe.hpp"
+#include "poll.hpp"
 
 namespace jms {
 struct RunPath : RequiredArg<StringArg, RunPath> {
@@ -37,38 +37,30 @@ class PoolHandle {
   PoolId id;
   psx::Process proc;
 
-  static psx::DuplexConnection make_connection(const store::FileStore &store,
-                                               PoolId id) {
-    std::ostringstream os{};
-    os << "pool-" << id;
-
-    auto pool_spec = store.substore(os.str());
-
-    auto r = pool_spec.create_fifo("in").into_read();
-    auto w = pool_spec.create_fifo("out").into_write();
-
-    return {std::move(r), std::move(w)};
-  }
-
 public:
   PoolHandle(const store::FileStore &store, PoolId id)
-      : id(id), proc(make_connection(store, id), pool_main) {}
+      : id(id), proc(psx::Process::fork(
+                    [&](std::string_view path) {
+                      std::ostringstream os{};
+                      os << "pool-" << id;
+                      return store.substore(os.str()).create_fifo(path);
+                    },
+                    pool_main)) {}
 
   psx::Process &get_proc() { return proc; }
   PoolId pool_id() { return id; }
 
   auto get_proc_count() {
-    return WriteString("proc-count", proc.get_conn().w)
-        .then([this](auto) { return ReadString(proc.get_conn().r); })
-        .map([](std::string &&s) { return std::stoi(s); });
+    return jms::send_command(proc.get_conn(), "proc-count")
+        .map([](std::string res) { return std::stoi(res); });
   }
 };
 
 class CoordExecutor {
-  size_t jobs_per_pool;
+  const size_t jobs_per_pool;
   store::FileStore &store;
   std::map<PoolId, PoolHandle> pools;
-  std::optional<PoolHandle *> last_pool;
+  PoolHandle *last_pool;
 
   JobId next_job;
   PoolId next_pool;
@@ -82,16 +74,22 @@ public:
   PoolId get_next_pool() const { return next_pool; }
   size_t get_pool_size() const { return jobs_per_pool; }
 
-  psx::Dynamic<std::pair<JobId, pid_t>>
-  spawn_job(std::string path, std::vector<std::string> args);
+  PoolHandle *pool_for_job(JobId id);
 
-  PoolHandle *pool_for_job(JobId id) {
-    auto iter = pools.find(id % jobs_per_pool);
-    if (iter == pools.end())
-      return nullptr;
+  auto spawn_job(std::string path, std::vector<std::string> args) {
+    JobId job_id = next_job++;
 
-    return &iter->second;
+    if (!last_pool || job_id % jobs_per_pool == 0)
+      new_pool();
+
+    return spawn_on_last_pool(job_id, std::move(path), std::move(args));
   }
+
+private:
+  psx::Dynamic<std::pair<JobId, pid_t>>
+  spawn_on_last_pool(JobId id, std::string path, std::vector<std::string> args);
+
+  PoolHandle &new_pool();
 };
 
 namespace command::coord {
@@ -150,5 +148,18 @@ struct Suspend : public jms::JobIdCommand<CoordExecutor> {
       : jms::JobIdCommand<CoordExecutor>("suspend", peek) {}
   psx::Dynamic<std::string> execute(CoordExecutor &ex) override;
 };
+
+// struct Status : public jms::JobIdCommand<CoordExecutor> {
+//   explicit Status(PeekableStream &peek)
+//       : jms::JobIdCommand<CoordExecutor>("status", peek) {}
+//   psx::Dynamic<std::string> execute(CoordExecutor &ex) override;
+// };
+//
+// struct StatusAll : public jms::JobIdCommand<CoordExecutor> {
+//   explicit StatusAll(PeekableStream &peek)
+//       : jms::JobIdCommand<CoordExecutor>("status-all", peek) {
+//   }
+//   psx::Dynamic<std::string> execute(CoordExecutor &ex) override;
+// };
 } // namespace command::coord
 } // namespace jms

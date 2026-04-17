@@ -36,13 +36,18 @@ class WriteString : public psx::Async<std::monostate, WriteString> {
   size_t curr;
   std::string s;
 
+  static constexpr size_t MAX = std::numeric_limits<size_t>::max();
+
 public:
   using Result = std::monostate;
 
   WriteString(std::string s, psx::WriteEnd &w)
-      : w(w), curr(std::numeric_limits<size_t>::max()), s(std::move(s)) {}
+      : w(w), curr(MAX), s(std::move(s)) {}
 
   psx::PollStatus<Result> poll(const struct pollfd &) override;
   void make_wakers(psx::WakerCollector &collector) override;
 };
+
+psx::Then<WriteString, ReadString> send_command(psx::DuplexConnection &conn,
+                                                std::string cmd);
 } // namespace jms

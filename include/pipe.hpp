@@ -136,8 +136,12 @@ class Process {
   pid_t pid;
   DuplexConnection conn;
 
+  Process(pid_t pid, DuplexConnection conn) : pid(pid), conn(std::move(conn)) {}
+
 public:
-  Process(psx::DuplexConnection conn, std::function<int(DuplexConnection &)> f);
+  static Process fork(std::function<Fifo(std::string_view)> make_fifo,
+                      std::function<int(DuplexConnection &)> f);
+
   Process(Process &&) noexcept;
 
   // blocking version

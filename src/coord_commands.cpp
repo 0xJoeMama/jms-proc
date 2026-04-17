@@ -9,12 +9,8 @@ using namespace command::coord;
 psx::Dynamic<std::string> ShowActive::execute(CoordExecutor &ex) {
   psx::Join<std::string> active;
   for (auto &[_, pool] : ex.get_pools()) {
-    auto &[r, w] = pool.get_proc().get_conn();
-
     // send message to all pools
-    active.push(WriteString("show-active", w).then([&r = r](auto) {
-      return ReadString(r);
-    }));
+    active.push(jms::send_command(pool.get_proc().get_conn(), "show-active"));
   }
 
   return active.map([](auto &&actives) {
@@ -43,12 +39,10 @@ psx::Dynamic<std::string> ShowFinished::execute(CoordExecutor &ex) {
 
       active.push(psx::Completed(os.str()));
     } else {
-      auto &[r, w] = iter->second.get_proc().get_conn();
+      auto &conn = iter->second.get_proc().get_conn();
 
       // send message to all pools
-      active.push(WriteString("show-finished", w).then([&r = r](auto) {
-        return ReadString(r);
-      }));
+      active.push(jms::send_command(conn, "show-finished"));
     }
   }
 
@@ -66,58 +60,30 @@ psx::Dynamic<std::string> Resume::execute(CoordExecutor &ex) {
   PoolHandle *target_pool = ex.pool_for_job(job_id);
 
   // if the pool does not exist, we just make a fake message
-  if (!target_pool) {
-    std::ostringstream os{};
-    os << "Sent resume signal to job " << job_id;
+  if (!target_pool)
+    return psx::Completed<std::string>(
+        sutil::concat("Sent resume signal to job", job_id));
 
-    return psx::Completed<std::string>(os.str());
-  }
-
-  // otherwise we sent a command to the pool on the other and to ask it to do
-  // the thing
-  auto &[r, w] = target_pool->get_proc().get_conn();
-  std::ostringstream os{};
-  os << "resume " << job_id;
-
-  // first send the command
-  return WriteString(os.str(), w)
-      // then receive it
-      .then([&r = r](auto) { return ReadString(r); })
+  return jms::send_command(target_pool->get_proc().get_conn(),
+                           sutil::concat("resume", job_id))
       .map([this](auto) {
-        std::ostringstream os{};
-        os << "Sent resume signal to job " << job_id;
-
-        return os.str();
-      }); // finally write a message back to whoever called this
+        return sutil::concat("Sent resume signal to job", job_id);
+      });
 }
 
 psx::Dynamic<std::string> Suspend::execute(CoordExecutor &ex) {
   PoolHandle *target_pool = ex.pool_for_job(job_id);
 
   // if the pool does not exist, we just make a fake message
-  if (!target_pool) {
-    std::ostringstream os{};
-    os << "Sent suspend signal to job " << job_id;
+  if (!target_pool)
+    return psx::Completed<std::string>(
+        sutil::concat("Sent suspend signal to job", job_id));
 
-    return psx::Completed<std::string>(os.str());
-  }
-
-  // otherwise we sent a command to the pool on the other and to ask it to do
-  // the thing
-  auto &[r, w] = target_pool->get_proc().get_conn();
-  std::ostringstream os{};
-  os << "suspend " << job_id;
-
-  // first send the command
-  return WriteString(os.str(), w)
-      // then receive it
-      .then([&r = r](auto) { return ReadString(r); })
+  return jms::send_command(target_pool->get_proc().get_conn(),
+                           sutil::concat("suspend", job_id))
       .map([this](auto) {
-        std::ostringstream os{};
-        os << "Sent resume signal to job " << job_id;
-
-        return os.str();
-      }); // finally write a message back to whoever called this
+        return sutil::concat("Sent suspend signal to job", job_id);
+      });
 }
 
 psx::Dynamic<std::string> Submit::execute(CoordExecutor &ex) {

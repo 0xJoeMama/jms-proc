@@ -7,6 +7,7 @@
 
 #include "except.hpp"
 #include "pipe.hpp"
+#include "util.hpp"
 
 using namespace psx;
 
@@ -126,17 +127,45 @@ WriteEnd Fifo::into_write(int flags) {
 DuplexConnection::DuplexConnection(psx::ReadEnd r, psx::WriteEnd w)
     : r(std::move(r)), w(std::move(w)) {}
 
-Process::Process(psx::DuplexConnection conn,
-                 std::function<int(DuplexConnection &)> f)
-    : pid(-1), conn(std::move(conn)) {
-  switch ((pid = fork())) {
+Process Process::fork(std::function<Fifo(std::string_view)> make_fifo,
+                      std::function<int(DuplexConnection &)> f) {
+  pid_t pid;
+  auto fr = make_fifo("in");
+  auto fw = make_fifo("out");
+
+  switch ((pid = ::fork())) {
   case -1:
     throw ErrnoException("failed to create child process");
   case 0: {
-    int res = f(this->conn);
+    // block until parent start reading
+    auto r = fr.into_read(0);
+    auto w = fw.into_write(0);
+
+    DuplexConnection conn(std::move(r), std::move(w));
+    int res = f(conn);
     exit(res);
   } break;
   }
+
+  // do not block on write
+  auto w = fr.into_write(O_CLOEXEC);
+  // block until we can make sure that the other end has started reading
+  auto r = fw.into_read(O_CLOEXEC);
+
+  if (fcntl(w.get_fd(), F_SETFL, O_NONBLOCK | O_CLOEXEC) < 0)
+    throw ErrnoException(
+        sutil::concat("failed to set communication channel with child ", pid,
+                      " to non-blocking"));
+
+  if (fcntl(r.get_fd(), F_SETFL, O_NONBLOCK | O_CLOEXEC) < 0)
+    throw ErrnoException(
+        sutil::concat("failed to set communication channel with child ", pid,
+                      " to non-blocking"));
+
+  return Process{
+      pid,
+      DuplexConnection(std::move(r), std::move(w)),
+  };
 }
 
 Process::Process(Process &&other) noexcept

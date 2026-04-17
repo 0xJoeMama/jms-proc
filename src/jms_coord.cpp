@@ -43,9 +43,7 @@ void run(CoordConfig &cfg) {
             // by blocking here, we guarantee that command are
             // executed atomically. That is only one command
             // may run from time to time and until it
-            // completes, no other command may execute execute
-            // that command, which returns an Dynamic<string>
-            // block on the execution of that async
+            // completes, no other command may execute 
             auto ex_res = psx::await(cmd->execute(ex));
 
             // write the output to the duplex conn

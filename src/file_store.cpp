@@ -11,6 +11,7 @@
 
 #include "except.hpp"
 #include "file_store.hpp"
+#include "util.hpp"
 
 using namespace store;
 using namespace psx;
@@ -74,8 +75,14 @@ Dir::Dir(std::string_view root, bool delete_if_exists) : root(root) {
   try {
     dir = mk_open_dir(this->root.c_str());
   } catch (const AlreadyThere &) {
-    if (!delete_if_exists)
+    if (!delete_if_exists) {
+      dir = opendir(this->root.c_str());
+      if (!dir)
+        throw psx::ErrnoException(
+            sutil::concat("failed to open directory:", root));
+
       return;
+    }
 
     // dir exists here, thus we need to delete its contents
     Fts fts(this->root.c_str());
@@ -87,8 +94,7 @@ Dir::Dir(std::string_view root, bool delete_if_exists) : root(root) {
       case FTS_DP:
         if (rmdir(ent->fts_accpath) < 0) {
           std::ostringstream os{};
-          os << "failed to remove directory '" << ent->fts_accpath << '\''
-             << ": ";
+          os << "failed to remove directory '" << ent->fts_accpath << '\'';
 
           throw psx::ErrnoException(os.str());
         }
@@ -125,6 +131,7 @@ Dir::Dir(std::string_view root, bool delete_if_exists) : root(root) {
 }
 
 Dir::~Dir() noexcept {
+  std::cerr << "This destructor is running for " << dir << std::endl;
   if (closedir(dir) < 0)
     std::cerr << strerror(errno) << std::endl;
 }

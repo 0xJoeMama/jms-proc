@@ -12,7 +12,8 @@ vpath %.hpp include/
 
 all: $(BINS)
 
-jms_coord: jms_coord.o file_store.o signals.o pipe.o async_ops.o pool.o coord_commands.o
+jms_coord: jms_coord.o file_store.o signals.o pipe.o async_ops.o pool.o \
+	coord_commands.o coord_executor.o
 jms_console: jms_console.o file_store.o signals.o pipe.o async_ops.o
 
 command_tests: command_tests.o
