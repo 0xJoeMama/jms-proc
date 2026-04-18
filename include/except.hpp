@@ -47,15 +47,3 @@ public:
   int get_errno() const { return err; }
 };
 } // namespace psx
-
-namespace jms {
-class FullPoolException : std::exception {
-public:
-  const char *what() const noexcept override { return "Job pool was full"; }
-};
-
-class NoCommandException : std::exception {
-public:
-  const char *what() const noexcept override { return "Job pool was full"; }
-};
-} // namespace jms

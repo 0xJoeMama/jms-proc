@@ -151,7 +151,7 @@ template <typename U> class Join : public Async<std::vector<U>, Join<U>> {
 
     void operator()(const struct pollfd &pfd) override {
       WakerCollector::operator()(pfd);
-      rev.emplace(curr, pfd.fd);
+      rev.emplace(pfd.fd, curr);
     }
   };
 
@@ -168,8 +168,16 @@ public:
 
     // we received an event for fd->fd
     auto it = rev.find(fd.fd);
-    if (it == rev.end())
-      throw std::runtime_error("invalid file descriptor was provided to join");
+    if (it == rev.end()) {
+      std::ostringstream os{};
+      os << "file descriptor " << fd.fd << " was not part of the join set [";
+      for (const auto &[fd, idx] : rev)
+        os << fd << " ";
+
+      os << "]";
+
+      throw std::runtime_error(os.str());
+    }
 
     auto &poll = polls[it->second];
     auto res = poll->poll(fd);
@@ -313,12 +321,13 @@ template <typename U> typename U::Result await(U &&it) {
     if (evs < 0 && errno != EINTR)
       throw ErrnoException("failed to poll file descriptor events");
 
-    for (size_t i = 0; i < wakers.size(); i++) {
+    for (size_t i = 0; i < wakers.size() && evs > 0; i++) {
       const auto &curr = wakers[i];
 
       if (!curr.revents)
         continue;
 
+      evs--;
       try {
         auto res = it.poll(curr);
 

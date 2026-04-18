@@ -4,9 +4,11 @@
 #include <sstream>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <variant>
 
 #include "except.hpp"
 #include "pipe.hpp"
+#include "util.hpp"
 
 using namespace psx;
 
@@ -173,23 +175,70 @@ std::optional<int> Process::wait_no_block() {
   return std::make_optional(res);
 }
 
+void Process::signal(int sig, std::variant<int, void *> arg) const {
+  union sigval val;
+
+  if (std::holds_alternative<int>(arg))
+    val.sival_int = std::get<int>(arg);
+  else
+    val.sival_ptr = std::get<void *>(arg);
+
+  if (sigqueue(pid, sig, val) < 0)
+    throw ErrnoException(
+        sutil::concat("failed to deliver signal to process", pid));
+}
+
+namespace {
+void ignore_act(int) {
+  // no-op
+}
+} // namespace
+
 Process::~Process() noexcept {
   if (pid < 0)
     return;
 
-  sigval_t v{};
-  if (sigqueue(pid, SIGTERM, v) < 0)
+  try {
+    // try to be kind
+    signal(SIGTERM);
+  } catch (const ErrnoException &e) {
     std::cerr << "WARN: failed to send termination signal to process " << pid
               << std::endl;
+  }
 
   pid_t pid = this->pid;
+  struct sigaction old;
+
   try {
+    struct sigaction act;
+    act.sa_handler = ignore_act;
+    act.sa_flags = SA_INTERRUPT;
+
+    if (sigaction(SIGALRM, &act, &old) < 0) {
+      sigaction(SIGALRM, nullptr, &old);
+      throw ErrnoException("failed to set wakeup alarm");
+    }
+
+    // this is here in order to interrupt the wait call in case the process we
+    // are signalling is stopped and/or not responding for some reason
+    // We set an alarm that will interrupt the wait call. After that we KILL
+    // that process as an example to others to never mess with our timing
+    alarm(1);
+
     int exit = wait();
     std::cerr << "INFO: process with PID " << pid
               << " has been forcibly terminated. Exit code: "
               << WEXITSTATUS(exit) << std::endl;
   } catch (const ErrnoException &e) {
-    std::cerr << "WARN: could not wait for child process " << pid << ": "
-              << e.what() << std::endl;
+    std::cerr << "WARN: " << e.what() << std::endl;
+    // lets actually not be kind
+    signal(SIGKILL);
+
+    wait();
+    std::cout << "INFO: process with PID " << pid
+              << " has been forcibly killed." << std::endl;
   }
+
+  if (sigaction(SIGALRM, &old, nullptr) < 0)
+    std::cerr << "WARN: failed to reset SIGALRM handler" << std::endl;
 }

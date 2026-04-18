@@ -7,6 +7,7 @@
 #include <optional>
 #include <string>
 #include <unistd.h>
+#include <variant>
 
 #include "except.hpp"
 
@@ -142,6 +143,9 @@ public:
   // blocking version
   int wait();
   std::optional<int> wait_no_block();
+
+  // send signal to process
+  void signal(int sig, std::variant<int, void *> arg = nullptr) const;
 
   pid_t get_pid() const { return pid; }
 

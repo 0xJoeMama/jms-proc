@@ -31,21 +31,21 @@ struct CoordConfig
   static constexpr const char *example = "-l . -n 12";
 };
 
-int pool_main(const store::FileStore &store, psx::DuplexConnection &conn);
+int pool_main(PoolId id, size_t jobs_per_pool, const store::FileStore &store, psx::DuplexConnection &conn);
 
 class PoolHandle {
   psx::DuplexConnection conn;
   psx::Process proc;
   PoolId id;
 
-  static PoolHandle make_pool(const store::FileStore &store, PoolId id);
+  static PoolHandle make_pool(const store::FileStore &store, PoolId id, size_t njobs);
 
   PoolHandle(PoolId id, psx::Process proc, psx::DuplexConnection conn)
       : conn(std::move(conn)), proc(std::move(proc)), id(id) {}
 
 public:
-  PoolHandle(const store::FileStore &store, PoolId id)
-      : PoolHandle(make_pool(store, id)) {}
+  PoolHandle(const store::FileStore &store, PoolId id, size_t njobs)
+      : PoolHandle(make_pool(store, id, njobs)) {}
 
   psx::Process &get_proc() { return proc; }
   psx::DuplexConnection &get_conn() { return conn; }
@@ -151,17 +151,17 @@ struct Suspend : public jms::JobIdCommand<CoordExecutor> {
   psx::Dynamic<std::string> execute(CoordExecutor &ex) override;
 };
 
-// struct Status : public jms::JobIdCommand<CoordExecutor> {
-//   explicit Status(PeekableStream &peek)
-//       : jms::JobIdCommand<CoordExecutor>("status", peek) {}
-//   psx::Dynamic<std::string> execute(CoordExecutor &ex) override;
-// };
-//
-// struct StatusAll : public jms::JobIdCommand<CoordExecutor> {
-//   explicit StatusAll(PeekableStream &peek)
-//       : jms::JobIdCommand<CoordExecutor>("status-all", peek) {
-//   }
-//   psx::Dynamic<std::string> execute(CoordExecutor &ex) override;
-// };
+struct Status : public jms::JobIdCommand<CoordExecutor> {
+  explicit Status(PeekableStream &peek)
+      : jms::JobIdCommand<CoordExecutor>("status", peek) {}
+  psx::Dynamic<std::string> execute(CoordExecutor &ex) override;
+};
+
+struct StatusAll : public jms::JobIdCommand<CoordExecutor> {
+  explicit StatusAll(PeekableStream &peek)
+      : jms::JobIdCommand<CoordExecutor>("status-all", peek) {
+  }
+  psx::Dynamic<std::string> execute(CoordExecutor &ex) override;
+};
 } // namespace command::coord
 } // namespace jms

@@ -4,7 +4,8 @@
 
 using namespace jms;
 
-PoolHandle PoolHandle::make_pool(const store::FileStore &store, PoolId id) {
+PoolHandle PoolHandle::make_pool(const store::FileStore &store, PoolId id,
+                                 size_t njobs) {
   auto substore = store.substore(sutil::concat<'-'>("pool", id));
 
   auto fr = substore.create_fifo("in");
@@ -15,7 +16,7 @@ PoolHandle PoolHandle::make_pool(const store::FileStore &store, PoolId id) {
     auto w = fw.into_write(0);
 
     psx::DuplexConnection conn(std::move(r), std::move(w));
-    int res = pool_main(store, conn);
+    int res = pool_main(id, njobs, store, conn);
     std::quick_exit(res);
     return 1;
   });
@@ -47,7 +48,7 @@ PoolHandle *CoordExecutor::pool_for_job(JobId id) {
 PoolHandle &CoordExecutor::new_pool() {
   PoolId id = next_pool++;
 
-  PoolHandle pool(store, id);
+  PoolHandle pool(store, id, this->jobs_per_pool);
   pools.try_emplace(id, std::move(pool));
 
   PoolHandle &res = pools.at(id);

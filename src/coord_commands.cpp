@@ -1,5 +1,6 @@
 #include <algorithm>
 
+#include "async_ops.hpp"
 #include "jms_coord.hpp"
 #include "poll.hpp"
 
@@ -60,12 +61,12 @@ psx::Dynamic<std::string> Resume::execute(CoordExecutor &ex) {
   // if the pool does not exist, we just make a fake message
   if (!target_pool)
     return psx::Completed<std::string>(
-        sutil::concat("Sent resume signal to job", job_id));
+        sutil::concat("Sent resume signal to JobID", job_id));
 
   return jms::send_command(target_pool->get_conn(),
                            sutil::concat("resume", job_id))
       .map([this](auto) {
-        return sutil::concat("Sent resume signal to job", job_id);
+        return sutil::concat("Sent resume signal to JobID", job_id);
       });
 }
 
@@ -75,12 +76,12 @@ psx::Dynamic<std::string> Suspend::execute(CoordExecutor &ex) {
   // if the pool does not exist, we just make a fake message
   if (!target_pool)
     return psx::Completed<std::string>(
-        sutil::concat("Sent suspend signal to job", job_id));
+        sutil::concat("Sent suspend signal to JobID", job_id));
 
   return jms::send_command(target_pool->get_conn(),
                            sutil::concat("suspend", job_id))
       .map([this](auto) {
-        return sutil::concat("Sent suspend signal to job", job_id);
+        return sutil::concat("Sent suspend signal to JobID", job_id);
       });
 }
 
@@ -118,4 +119,18 @@ psx::Dynamic<std::string> ShowPools::execute(CoordExecutor &ex) {
 
     return os.str();
   });
+}
+
+psx::Dynamic<std::string> Status::execute(CoordExecutor &ex) {
+  PoolHandle *handle = ex.pool_for_job(job_id);
+  if (handle)
+    return jms::send_command(handle->get_conn(),
+                             sutil::concat("status", job_id));
+
+  if (job_id / ex.get_pool_size() < ex.get_next_pool()) {
+    return psx::Completed<std::string>(
+        sutil::concat("JobID", job_id, "Status:", "Finished"));
+  } else {
+    return psx::Completed<std::string>("Id does not match any submitted job");
+  }
 }
