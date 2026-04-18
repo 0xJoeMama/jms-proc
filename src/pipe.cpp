@@ -7,7 +7,6 @@
 
 #include "except.hpp"
 #include "pipe.hpp"
-#include "util.hpp"
 
 using namespace psx;
 
@@ -199,8 +198,12 @@ Process::~Process() noexcept {
     std::cerr << "WARN: failed to send termination signal to process " << pid
               << std::endl;
 
+  pid_t pid = this->pid;
   try {
-    wait_no_block();
+    int exit = wait();
+    std::cerr << "INFO: process with PID " << pid
+              << " has been forcibly terminated. Exit code: "
+              << WEXITSTATUS(exit) << std::endl;
   } catch (const ErrnoException &e) {
     std::cerr << "WARN: could not wait for child process " << pid << ": "
               << e.what() << std::endl;

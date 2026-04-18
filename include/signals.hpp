@@ -8,8 +8,10 @@
 namespace jms::signals {
 void block_unwanted();
 
+template <int sig> struct Signal {};
+
 template <int sig>
-class OnSignal : public psx::Async<std::monostate, OnSignal<sig>> {
+class OnSignal : public psx::Async<Signal<sig>, OnSignal<sig>> {
   static psx::Pipe pipe;
 
   static void handle_signal(int, siginfo_t *, void *) {
@@ -28,7 +30,7 @@ public:
       throw psx::ErrnoException("failed to set signal handler");
   }
 
-  psx::PollStatus<std::monostate> poll(const struct pollfd &) override {
+  psx::PollStatus<Signal<sig>> poll(const struct pollfd &) override {
     auto &r = pipe.read_end();
 
     char c;
@@ -37,7 +39,7 @@ public:
     } catch (const psx::PosixException &) {
     }
 
-    return std::monostate{};
+    return Signal<sig>{};
   }
 
   void make_wakers(psx::WakerCollector &collector) override {
@@ -51,4 +53,4 @@ public:
 
 template <int sig>
 psx::Pipe OnSignal<sig>::pipe = psx::Pipe(O_NONBLOCK | O_CLOEXEC);
-}
+} // namespace jms::signals

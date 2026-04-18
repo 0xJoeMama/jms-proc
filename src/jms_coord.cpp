@@ -43,7 +43,7 @@ void run(CoordConfig &cfg) {
             // by blocking here, we guarantee that command are
             // executed atomically. That is only one command
             // may run from time to time and until it
-            // completes, no other command may execute 
+            // completes, no other command may execute
             auto ex_res = psx::await(cmd->execute(ex));
 
             // write the output to the duplex conn
@@ -61,6 +61,9 @@ void run(CoordConfig &cfg) {
         std::cerr << "ERROR: could not handle client: " << e.what()
                   << std::endl;
         break;
+      } catch (command::coord::ShutdownException &) {
+        ex.get_pools().clear();
+        return;
       }
     }
   }

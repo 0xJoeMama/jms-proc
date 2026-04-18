@@ -324,6 +324,8 @@ template <typename U> typename U::Result await(U &&it) {
 
         if (std::holds_alternative<T>(res))
           return std::get<T>(std::move(res));
+        else
+          break;
       } catch (const ErrnoException &e) {
         switch (e.get_errno()) {
         case EINTR:

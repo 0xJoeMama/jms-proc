@@ -8,11 +8,14 @@
 #include "executor.hpp"
 #include "file_store.hpp"
 #include "pipe.hpp"
+#include "signals.hpp"
 
 using namespace jms;
 
 namespace {
 class JobHandle {
+  JobId job_id;
+  ProcStatus status;
   psx::Process proc;
 
   static std::string make_output_dir(JobId job_id, pid_t pid) {
@@ -30,7 +33,7 @@ class JobHandle {
 public:
   JobHandle(const store::FileStore &store, JobId id, std::string path,
             std::vector<std::string> args)
-      : proc([&](auto pid) {
+      : job_id(id), proc([&](auto pid) {
           // first set-up file descriptors
           store::FileStore root = store.substore(make_output_dir(id, pid));
 
@@ -68,9 +71,13 @@ public:
                                                   sutil::concat_iter(args)));
 
           return 1;
-        }) {}
+        }) {
+    status = ProcStatus::Active;
+  }
 
   psx::Process &get_proc() { return proc; }
+  JobId get_job_id() const { return job_id; }
+  ProcStatus get_status() const { return status; }
 };
 
 struct PoolExecutor {
@@ -141,19 +148,46 @@ int pool_main(const store::FileStore &root_store, psx::DuplexConnection &conn) {
   PoolExecutor ex(root_store);
 
   while (1) {
-    auto cmdstr = psx::await(ReadString(r));
+    auto async = psx::select(ReadString(r), signals::OnSignal<SIGTERM>(),
+                             signals::OnSignal<SIGCHLD>());
+    psx::select_visit(
+        Match{
+            [&, &w = w](std::string &&cmdstr) {
+              try {
+                auto cmd =
+                    jms::parse_command<PoolExecutor, Submit, Resume, Suspend>(
+                        std::move(cmdstr));
 
-    try {
-      auto cmd = jms::parse_command<PoolExecutor, Submit, Resume, Suspend>(
-          std::move(cmdstr));
+                psx::await(cmd->execute(ex).then([&w = w](auto &&res) {
+                  return WriteString(std::move(res), w);
+                }));
+              } catch (const error::CommandParseError &e) {
+                psx::await(WriteString(e.what(), w));
+              } catch (const error::CommandExecutionError &e) {
+                psx::await(WriteString(e.what(), w));
+              }
+            },
+            [&](signals::Signal<SIGTERM>) {
+              std::cout << "INFO: got SIGTERM, shutting down..." << std::endl;
+              ex.children.clear();
+              ::_exit(0);
+            },
+            [&](signals::Signal<SIGCHLD>) {
+              siginfo_t si;
+              while (waitid(P_ALL, -1, &si, WNOHANG | WNOWAIT | WEXITED) >= 0 &&
+                     si.si_signo == SIGCHLD) {
+                auto iter = ex.by_pid.extract(si.si_pid);
+                auto node = ex.children.extract(iter.mapped()->get_job_id());
 
-      psx::await(cmd->execute(ex).then(
-          [&w = w](auto &&res) { return WriteString(std::move(res), w); }));
-    } catch (const error::CommandParseError &e) {
-      psx::await(WriteString(e.what(), w));
-    } catch (const error::CommandExecutionError &e) {
-      psx::await(WriteString(e.what(), w));
-    }
+                auto exit = node.mapped().get_proc().wait_no_block();
+                std::cout << "INFO: job with id " << node.mapped().get_job_id()
+                          << " and PID " << si.si_pid
+                          << " had exited with exit code " << WEXITSTATUS(*exit)
+                          << std::endl;
+              }
+            },
+        },
+        psx::await(std::move(async)));
   }
 }
 } // namespace jms
