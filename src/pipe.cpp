@@ -131,30 +131,14 @@ Process::Process(std::function<int(pid_t)> f) : pid(-1) {
   case -1:
     throw ErrnoException("failed to create child process");
   case 0: {
-    int res = f(::getpid());
-    std::quick_exit(res);
+    try {
+      int res = f(::getpid());
+      std::quick_exit(res);
+    } catch (...) {
+      std::quick_exit(1);
+    }
   } break;
   }
-
-  // // do not block on write
-  // auto w = fr.into_write(O_CLOEXEC);
-  // // block until we can make sure that the other end has started reading
-  // auto r = fw.into_read(O_CLOEXEC);
-  //
-  // if (fcntl(w.get_fd(), F_SETFL, O_NONBLOCK | O_CLOEXEC) < 0)
-  //   throw ErrnoException(
-  //       sutil::concat("failed to set communication channel with child ", pid,
-  //                     " to non-blocking"));
-  //
-  // if (fcntl(r.get_fd(), F_SETFL, O_NONBLOCK | O_CLOEXEC) < 0)
-  //   throw ErrnoException(
-  //       sutil::concat("failed to set communication channel with child ", pid,
-  //                     " to non-blocking"));
-  //
-  // return Process{
-  //     pid,
-  //     DuplexConnection(std::move(r), std::move(w)),
-  // };
 }
 
 Process::Process(Process &&other) noexcept : pid(other.pid) { other.pid = -1; }

@@ -15,7 +15,9 @@ PoolHandle PoolHandle::make_pool(const store::FileStore &store, PoolId id) {
     auto w = fw.into_write(0);
 
     psx::DuplexConnection conn(std::move(r), std::move(w));
-    return pool_main(store, conn);
+    int res = pool_main(store, conn);
+    std::quick_exit(res);
+    return 1;
   });
 
   auto w = fr.into_write(O_CLOEXEC);

@@ -147,7 +147,8 @@ int pool_main(const store::FileStore &root_store, psx::DuplexConnection &conn) {
 
   PoolExecutor ex(root_store);
 
-  while (1) {
+  bool finish = false;
+  while (!finish) {
     auto async = psx::select(ReadString(r), signals::OnSignal<SIGTERM>(),
                              signals::OnSignal<SIGCHLD>());
     psx::select_visit(
@@ -168,9 +169,9 @@ int pool_main(const store::FileStore &root_store, psx::DuplexConnection &conn) {
               }
             },
             [&](signals::Signal<SIGTERM>) {
-              std::cout << "INFO: got SIGTERM, shutting down..." << std::endl;
+              std::cerr << "INFO: got SIGTERM, shutting down..." << std::endl;
               ex.children.clear();
-              ::_exit(0);
+              finish = true;
             },
             [&](signals::Signal<SIGCHLD>) {
               siginfo_t si;
@@ -189,5 +190,7 @@ int pool_main(const store::FileStore &root_store, psx::DuplexConnection &conn) {
         },
         psx::await(std::move(async)));
   }
+
+  return 0;
 }
 } // namespace jms

@@ -34,14 +34,14 @@ struct CoordConfig
 int pool_main(const store::FileStore &store, psx::DuplexConnection &conn);
 
 class PoolHandle {
-  PoolId id;
-  psx::Process proc;
   psx::DuplexConnection conn;
+  psx::Process proc;
+  PoolId id;
 
   static PoolHandle make_pool(const store::FileStore &store, PoolId id);
 
   PoolHandle(PoolId id, psx::Process proc, psx::DuplexConnection conn)
-      : id(id), proc(std::move(proc)), conn(std::move(conn)) {}
+      : conn(std::move(conn)), proc(std::move(proc)), id(id) {}
 
 public:
   PoolHandle(const store::FileStore &store, PoolId id)

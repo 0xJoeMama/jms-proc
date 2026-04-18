@@ -131,7 +131,6 @@ Dir::Dir(std::string_view root, bool delete_if_exists) : root(root) {
 }
 
 Dir::~Dir() noexcept {
-  std::cerr << "This destructor is running for " << dir << std::endl;
   if (closedir(dir) < 0)
     std::cerr << strerror(errno) << std::endl;
 }
