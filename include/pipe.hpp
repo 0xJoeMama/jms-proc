@@ -138,6 +138,7 @@ class Process {
 
 public:
   explicit Process(std::function<int(pid_t)> f);
+  Process(const Process &) = delete;
   Process(Process &&) noexcept;
 
   // blocking version

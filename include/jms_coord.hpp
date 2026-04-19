@@ -31,14 +31,16 @@ struct CoordConfig
   static constexpr const char *example = "-l . -n 12";
 };
 
-int pool_main(PoolId id, size_t jobs_per_pool, const store::FileStore &store, psx::DuplexConnection &conn);
+int pool_main(PoolId id, size_t jobs_per_pool, const store::FileStore &store,
+              psx::DuplexConnection &conn);
 
 class PoolHandle {
   psx::DuplexConnection conn;
   psx::Process proc;
   PoolId id;
 
-  static PoolHandle make_pool(const store::FileStore &store, PoolId id, size_t njobs);
+  static PoolHandle make_pool(const store::FileStore &store, PoolId id,
+                              size_t njobs);
 
   PoolHandle(PoolId id, psx::Process proc, psx::DuplexConnection conn)
       : conn(std::move(conn)), proc(std::move(proc)), id(id) {}
@@ -101,7 +103,7 @@ class Submit : public jms::Command<CoordExecutor> {
 
 public:
   explicit Submit(PeekableStream &peek)
-      : jms::Command<CoordExecutor>("submit", peek) {
+      : jms::Command<CoordExecutor>(mnem::SUBMIT, peek) {
     if (!(peek.stream() >> path))
       throw error::CommandParseError("no program path was provided to submit");
 
@@ -117,50 +119,49 @@ struct ShutdownException {};
 
 struct Shutdown : public jms::Command<CoordExecutor> {
   explicit Shutdown(PeekableStream &peek)
-      : jms::Command<CoordExecutor>("shutdown", peek) {}
+      : jms::Command<CoordExecutor>(mnem::SHUTDOWN, peek) {}
   psx::Dynamic<std::string> execute(CoordExecutor &ex) override;
 };
 
 struct ShowPools : public jms::Command<CoordExecutor> {
   explicit ShowPools(PeekableStream &peek)
-      : jms::Command<CoordExecutor>("show-pools", peek) {}
+      : jms::Command<CoordExecutor>(mnem::SHOW_POOLS, peek) {}
   psx::Dynamic<std::string> execute(CoordExecutor &ex) override;
 };
 
 struct ShowActive : public jms::Command<CoordExecutor> {
   explicit ShowActive(PeekableStream &peek)
-      : jms::Command<CoordExecutor>("show-active", peek) {}
+      : jms::Command<CoordExecutor>(mnem::SHOW_ACTIVE, peek) {}
   psx::Dynamic<std::string> execute(CoordExecutor &ex) override;
 };
 
 struct ShowFinished : public jms::Command<CoordExecutor> {
   explicit ShowFinished(PeekableStream &peek)
-      : jms::Command<CoordExecutor>("show-finished", peek) {}
+      : jms::Command<CoordExecutor>(mnem::SHOW_FINISHED, peek) {}
   psx::Dynamic<std::string> execute(CoordExecutor &ex) override;
 };
 
 struct Resume : public jms::JobIdCommand<CoordExecutor> {
   explicit Resume(PeekableStream &peek)
-      : jms::JobIdCommand<CoordExecutor>("resume", peek) {}
+      : jms::JobIdCommand<CoordExecutor>(mnem::RESUME, peek) {}
   psx::Dynamic<std::string> execute(CoordExecutor &ex) override;
 };
 
 struct Suspend : public jms::JobIdCommand<CoordExecutor> {
   explicit Suspend(PeekableStream &peek)
-      : jms::JobIdCommand<CoordExecutor>("suspend", peek) {}
+      : jms::JobIdCommand<CoordExecutor>(mnem::SUSPEND, peek) {}
   psx::Dynamic<std::string> execute(CoordExecutor &ex) override;
 };
 
 struct Status : public jms::JobIdCommand<CoordExecutor> {
   explicit Status(PeekableStream &peek)
-      : jms::JobIdCommand<CoordExecutor>("status", peek) {}
+      : jms::JobIdCommand<CoordExecutor>(mnem::STATUS, peek) {}
   psx::Dynamic<std::string> execute(CoordExecutor &ex) override;
 };
 
 struct StatusAll : public jms::JobIdCommand<CoordExecutor> {
   explicit StatusAll(PeekableStream &peek)
-      : jms::JobIdCommand<CoordExecutor>("status-all", peek) {
-  }
+      : jms::JobIdCommand<CoordExecutor>(mnem::STATUS_ALL, peek) {}
   psx::Dynamic<std::string> execute(CoordExecutor &ex) override;
 };
 } // namespace command::coord

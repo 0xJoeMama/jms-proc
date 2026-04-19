@@ -6,6 +6,7 @@
 
 #include "async_ops.hpp"
 #include "command.hpp"
+#include "except.hpp"
 #include "executor.hpp"
 #include "file_store.hpp"
 #include "pipe.hpp"
@@ -33,7 +34,7 @@ class JobHandle {
   }
 
 public:
-  JobHandle(const store::FileStore &store, JobId id, std::string path,
+  JobHandle(JobId id, const store::FileStore &store, std::string path,
             std::vector<std::string> args)
       : job_id(id), proc([&](auto pid) {
           // first set-up file descriptors
@@ -80,6 +81,7 @@ public:
   psx::Process &get_proc() { return proc; }
   JobId get_job_id() const { return job_id; }
   ProcStatus get_status() const { return status; }
+  void set_status(ProcStatus status) { this->status = status; }
 };
 
 struct PoolExecutor {
@@ -90,8 +92,10 @@ struct PoolExecutor {
   std::map<pid_t, JobHandle *> by_pid;
   std::set<JobId> finished;
 
+  bool done;
+
   PoolExecutor(PoolId id, const store::FileStore &root_store, size_t njobs)
-      : id(id), root_store(root_store), njobs(njobs) {}
+      : id(id), root_store(root_store), njobs(njobs), done(false) {}
 
   size_t total_procs() const { return children.size() + finished.size(); }
 };
@@ -100,7 +104,8 @@ struct Submit : JobIdCommand<PoolExecutor> {
   std::string path;
   std::vector<std::string> args;
 
-  Submit(PeekableStream &peek) : JobIdCommand<PoolExecutor>("submit", peek) {
+  Submit(PeekableStream &peek)
+      : JobIdCommand<PoolExecutor>(command::pool::mnem::SUBMIT, peek) {
     if (!(peek.stream() >> path))
       throw jms::error::CommandParseError("submit requires a path argument");
 
@@ -113,7 +118,7 @@ struct Submit : JobIdCommand<PoolExecutor> {
     if (ex.total_procs() == ex.njobs)
       return psx::Completed<std::string>("pool is full");
 
-    ex.children.emplace(job_id, JobHandle(ex.root_store, job_id,
+    ex.children.emplace(job_id, JobHandle(job_id, ex.root_store,
                                           std::move(path), std::move(args)));
     auto &new_chld = ex.children.at(job_id);
     pid_t pid = new_chld.get_proc().get_pid();
@@ -124,7 +129,8 @@ struct Submit : JobIdCommand<PoolExecutor> {
 };
 
 struct Suspend : JobIdCommand<PoolExecutor> {
-  Suspend(PeekableStream &peek) : JobIdCommand<PoolExecutor>("suspend", peek) {}
+  Suspend(PeekableStream &peek)
+      : JobIdCommand<PoolExecutor>(command::pool::mnem::SUSPEND, peek) {}
   psx::Dynamic<std::string> execute(PoolExecutor &ex) override {
     auto it = ex.children.find(job_id);
 
@@ -139,7 +145,8 @@ struct Suspend : JobIdCommand<PoolExecutor> {
 };
 
 struct Resume : JobIdCommand<PoolExecutor> {
-  Resume(PeekableStream &peek) : JobIdCommand<PoolExecutor>("resume", peek) {}
+  Resume(PeekableStream &peek)
+      : JobIdCommand<PoolExecutor>(command::pool::mnem::RESUME, peek) {}
   psx::Dynamic<std::string> execute(PoolExecutor &ex) override {
     auto it = ex.children.find(job_id);
 
@@ -153,7 +160,8 @@ struct Resume : JobIdCommand<PoolExecutor> {
 };
 
 struct ProcCount : jms::Command<PoolExecutor> {
-  ProcCount(PeekableStream &peek) : Command<PoolExecutor>("proc-count", peek) {}
+  ProcCount(PeekableStream &peek)
+      : Command<PoolExecutor>(command::pool::mnem::PROC_COUNT, peek) {}
 
   psx::Dynamic<std::string> execute(PoolExecutor &ex) override {
     return psx::Completed<std::string>(std::to_string(ex.children.size()));
@@ -162,7 +170,7 @@ struct ProcCount : jms::Command<PoolExecutor> {
 
 struct ShowActive : jms::Command<PoolExecutor> {
   ShowActive(PeekableStream &peek)
-      : Command<PoolExecutor>("show-active", peek) {}
+      : Command<PoolExecutor>(command::pool::mnem::SHOW_ACTIVE, peek) {}
 
   psx::Dynamic<std::string> execute(PoolExecutor &ex) override {
     std::ostringstream os{};
@@ -190,7 +198,8 @@ struct ShowFinished : jms::Command<PoolExecutor> {
 };
 
 struct Status : JobIdCommand<PoolExecutor> {
-  Status(PeekableStream &peek) : JobIdCommand<PoolExecutor>("status", peek) {}
+  Status(PeekableStream &peek)
+      : JobIdCommand<PoolExecutor>(command::pool::mnem::STATUS, peek) {}
   psx::Dynamic<std::string> execute(PoolExecutor &ex) override {
     auto it = ex.children.find(job_id);
 
@@ -216,6 +225,70 @@ struct Status : JobIdCommand<PoolExecutor> {
 };
 
 // TODO: status-all is missing
+void receive_sigchld(PoolExecutor &ex) {
+  int res;
+
+  for (siginfo_t si{}; (res = waitid(P_ALL, -1, &si,
+                                     WNOHANG | WNOWAIT | WEXITED | WSTOPPED |
+                                         WCONTINUED)) == 0 &&
+                       si.si_signo == SIGCHLD;
+       si = {}) {
+    ProcStatus new_status = ProcStatus::Finished;
+
+    switch (si.si_code) {
+    case CLD_KILLED:
+    case CLD_DUMPED:
+    case CLD_EXITED: {
+      std::cout << "This is now running" << std::endl;
+      auto iter = ex.by_pid.extract(si.si_pid);
+      auto node = ex.children.extract(iter.mapped()->get_job_id());
+
+      auto exit = node.mapped().get_proc().wait_no_block();
+      std::cout << "INFO: job with id " << node.mapped().get_job_id()
+                << " and PID " << si.si_pid << " had exited with exit code "
+                << WEXITSTATUS(*exit) << std::endl;
+
+      ex.finished.insert(node.mapped().get_job_id());
+      continue;
+    } break;
+
+    case CLD_CONTINUED:
+      new_status = ProcStatus::Active;
+      break;
+    case CLD_STOPPED:
+      new_status = ProcStatus::Suspended;
+      break;
+    }
+
+    auto iter = ex.by_pid.at(si.si_pid);
+    auto &handle = ex.children.at(iter->get_job_id());
+    handle.set_status(new_status);
+
+    std::cout << "INFO: job with id " << handle.get_job_id() << " and PID "
+              << si.si_pid << " has changed status to "
+              << (new_status == ProcStatus::Active ? "Active" : "Suspended")
+              << std::endl;
+
+    int res;
+    while ((res = waitid(P_PID, si.si_pid, nullptr,
+                         WNOHANG | WCONTINUED | WSTOPPED)) < 0 &&
+           errno == EINTR)
+      ;
+
+    if (res < 0)
+      std::cerr << "WARN: failed to wait on job " << strerror(errno)
+                << std::endl;
+  }
+
+  if (res < 0)
+    throw psx::ErrnoException("failed to wait on updated job");
+}
+
+void receive_sigterm(PoolExecutor &ex) {
+  std::cerr << "INFO: got SIGTERM, shutting down..." << std::endl;
+  ex.children.clear();
+  ex.done = true;
+}
 } // namespace
 
 namespace jms {
@@ -225,8 +298,8 @@ int pool_main(PoolId id, size_t njobs, const store::FileStore &root_store,
 
   PoolExecutor ex(id, root_store, njobs);
 
-  bool finish = false;
-  while (!finish) {
+  signals::block_unwanted();
+  while (!ex.done) {
     auto async = psx::select(ReadString(r), signals::OnSignal<SIGTERM>(),
                              signals::OnSignal<SIGCHLD>());
     psx::select_visit(
@@ -247,32 +320,13 @@ int pool_main(PoolId id, size_t njobs, const store::FileStore &root_store,
                 psx::await(WriteString(e.what(), w));
               }
             },
-            [&](signals::Signal<SIGTERM>) {
-              std::cerr << "INFO: got SIGTERM, shutting down..." << std::endl;
-              ex.children.clear();
-              finish = true;
-            },
-            [&](signals::Signal<SIGCHLD>) {
-              siginfo_t si;
-              while (waitid(P_ALL, -1, &si, WNOHANG | WNOWAIT | WEXITED) >= 0 &&
-                     si.si_signo == SIGCHLD) {
-                auto iter = ex.by_pid.extract(si.si_pid);
-                auto node = ex.children.extract(iter.mapped()->get_job_id());
-
-                auto exit = node.mapped().get_proc().wait_no_block();
-                std::cout << "INFO: job with id " << node.mapped().get_job_id()
-                          << " and PID " << si.si_pid
-                          << " had exited with exit code " << WEXITSTATUS(*exit)
-                          << std::endl;
-
-                ex.finished.insert(node.mapped().get_job_id());
-              }
-
-              // TODO: handle WCONTINUED and WSTOPPED here as well
-            },
+            [&](signals::Signal<SIGCHLD>) { return receive_sigchld(ex); },
+            [&](signals::Signal<SIGTERM>) { return receive_sigterm(ex); },
         },
         psx::await(std::move(async)));
   }
+
+  std::cout << "INFO: job pool " << id << " is now exiting" << std::endl;
 
   // TODO: report the active jobs to the coord
   return 0;

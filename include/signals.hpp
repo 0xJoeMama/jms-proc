@@ -12,6 +12,7 @@ template <int sig> struct Signal {};
 
 template <int sig>
 class OnSignal : public psx::Async<Signal<sig>, OnSignal<sig>> {
+  // FIXME: This currently broadcasts signals to all pools which is NOT what we want
   static psx::Pipe pipe;
 
   static void handle_signal(int, siginfo_t *, void *) {

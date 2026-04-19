@@ -133,12 +133,18 @@ Process::Process(std::function<int(pid_t)> f) : pid(-1) {
   case -1:
     throw ErrnoException("failed to create child process");
   case 0: {
+    int res;
     try {
-      int res = f(::getpid());
-      std::quick_exit(res);
+      res = f(::getpid());
+    } catch (const std::exception &e) {
+      std::cerr << "ERROR: uncaught exception of type " << typeid(e).name()
+                << " was thrown: " << e.what() << std::endl;
     } catch (...) {
-      std::quick_exit(1);
+      std::cerr << "ERROR: spurious uncaught exception was thrown" << std::endl;
+      res = 1;
     }
+
+    std::quick_exit(res);
   } break;
   }
 }
