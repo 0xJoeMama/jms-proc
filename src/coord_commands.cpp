@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <numeric>
 
 #include "async_ops.hpp"
 #include "executor.hpp"
@@ -99,6 +100,27 @@ psx::Dynamic<std::string> Submit::execute(CoordExecutor &ex) {
 }
 
 psx::Dynamic<std::string> Shutdown::execute(CoordExecutor &) {
+  // psx::Join<size_t> statuses;
+  //
+  // for (auto &[job, handle] : ex.get_pools()) {
+  //   handle.get_proc().signal(SIGTERM);
+  //   statuses.push(ReadString(handle.get_conn().r).map([](std::string &&res) {
+  //     try {
+  //       return std::stoi(std::move(res));
+  //     } catch (...) {
+  //       return 0;
+  //     }
+  //   }));
+  // }
+  //
+  // return statuses
+  //     .map([](auto active) {
+  //       return std::accumulate(active.cbegin(), active.cend(), 0);
+  //     })
+  //     .map([&](auto total_active) {
+  //       return sutil::concat("Served", ex.get_next_pool(), "jobs,",
+  //                            total_active, "were still in progress");
+  //     });
   throw ShutdownException();
 }
 

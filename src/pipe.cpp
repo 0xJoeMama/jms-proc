@@ -133,7 +133,8 @@ Process::Process(std::function<int(pid_t)> f) : pid(-1) {
   case -1:
     throw ErrnoException("failed to create child process");
   case 0: {
-    int res;
+    int res = 1;
+
     try {
       res = f(::getpid());
     } catch (const std::exception &e) {
@@ -141,7 +142,6 @@ Process::Process(std::function<int(pid_t)> f) : pid(-1) {
                 << " was thrown: " << e.what() << std::endl;
     } catch (...) {
       std::cerr << "ERROR: spurious uncaught exception was thrown" << std::endl;
-      res = 1;
     }
 
     std::quick_exit(res);
@@ -219,6 +219,7 @@ Process::~Process() noexcept {
     struct sigaction act;
     act.sa_handler = ignore_act;
     act.sa_flags = SA_INTERRUPT;
+    sigemptyset(&act.sa_mask);
 
     if (sigaction(SIGALRM, &act, &old) < 0) {
       sigaction(SIGALRM, nullptr, &old);

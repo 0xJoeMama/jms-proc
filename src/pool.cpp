@@ -44,8 +44,6 @@ public:
             throw psx::ErrnoException(
                 sutil::concat("failed to chdir into", root.get_root()));
 
-          std::cerr << "Successfully chdir'ed into " << root.get_root().c_str()
-                    << std::endl;
           if (close(STDOUT_FILENO) < 0)
             throw psx::ErrnoException(
                 sutil::concat("failed to close stdout for process", pid));
@@ -69,9 +67,9 @@ public:
           argv.push_back(nullptr);
 
           ::execvp(path.c_str(), argv.data());
-          throw psx::ErrnoException(sutil::concat("failed to execute program",
-                                                  path, "with arguments",
-                                                  sutil::concat_iter(args)));
+          std::cerr << "failed to execute program " << path
+                    << " with arguments " << sutil::concat_iter(args)
+                    << std::endl;
 
           return 1;
         }) {
@@ -276,18 +274,23 @@ void receive_sigchld(PoolExecutor &ex) {
       ;
 
     if (res < 0)
-      std::cerr << "WARN: failed to wait on job " << strerror(errno)
+      std::cerr << "WARN: failed to wait on job: " << strerror(errno)
                 << std::endl;
   }
 
   if (res < 0)
-    throw psx::ErrnoException("failed to wait on updated job");
+    std::cerr << "WARN: failed to wait on updated job: " << strerror(errno)
+              << std::endl;
 }
 
-void receive_sigterm(PoolExecutor &ex) {
+void receive_sigterm(psx::WriteEnd &w, PoolExecutor &ex) {
   std::cerr << "INFO: got SIGTERM, shutting down..." << std::endl;
+  size_t active = ex.children.size();
+
   ex.children.clear();
   ex.done = true;
+
+  psx::await(WriteString(std::to_string(active), w));
 }
 } // namespace
 
@@ -296,12 +299,13 @@ int pool_main(PoolId id, size_t njobs, const store::FileStore &root_store,
               psx::DuplexConnection &conn) {
   auto [r, w] = std::move(conn);
 
+  signals::SignalScope scope;
   PoolExecutor ex(id, root_store, njobs);
 
   signals::block_unwanted();
   while (!ex.done) {
-    auto async = psx::select(ReadString(r), signals::OnSignal<SIGTERM>(),
-                             signals::OnSignal<SIGCHLD>());
+    auto async = psx::select(ReadString(r), scope.on_signal<SIGTERM>(),
+                             scope.on_signal<SIGCHLD>());
     psx::select_visit(
         Match{
             [&, &w = w](std::string &&cmdstr) {
@@ -321,14 +325,14 @@ int pool_main(PoolId id, size_t njobs, const store::FileStore &root_store,
               }
             },
             [&](signals::Signal<SIGCHLD>) { return receive_sigchld(ex); },
-            [&](signals::Signal<SIGTERM>) { return receive_sigterm(ex); },
+            [&, &w = w](signals::Signal<SIGTERM>) {
+              return receive_sigterm(w, ex);
+            },
         },
         psx::await(std::move(async)));
   }
 
   std::cout << "INFO: job pool " << id << " is now exiting" << std::endl;
-
-  // TODO: report the active jobs to the coord
   return 0;
 }
 } // namespace jms

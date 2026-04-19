@@ -71,7 +71,8 @@ class CoordExecutor {
 
 public:
   CoordExecutor(size_t jobs_per_pool, store::FileStore &store)
-      : jobs_per_pool(jobs_per_pool), store(store), next_job{0}, next_pool{0} {}
+      : jobs_per_pool(jobs_per_pool), store(store), last_pool(nullptr),
+        next_job{0}, next_pool{0} {}
 
   std::map<PoolId, PoolHandle> &get_pools() { return pools; }
   const std::map<PoolId, PoolHandle> &get_pools() const { return pools; }

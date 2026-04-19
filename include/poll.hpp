@@ -36,6 +36,8 @@ public:
 
   virtual PollStatus<T> poll(const struct pollfd &fd) = 0;
   virtual void make_wakers(WakerCollector &collector) = 0;
+
+  virtual ~AsyncBase() = default;
 };
 
 template <typename T, typename Self> class Async : public AsyncBase<T> {
