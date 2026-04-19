@@ -169,7 +169,7 @@ struct ShowActive : jms::Command<PoolExecutor> {
 
     for (const auto &[id, handle] : ex.children)
       if (handle.get_status() == ProcStatus::Active)
-        os << id << std::endl;
+        os << "JobID " << id << std::endl;
 
     return psx::Completed<std::string>(os.str());
   }
@@ -183,7 +183,7 @@ struct ShowFinished : jms::Command<PoolExecutor> {
     std::ostringstream os{};
 
     for (const auto &id : ex.finished)
-      os << id << std::endl;
+      os << "JobID " << id << std::endl;
 
     return psx::Completed<std::string>(os.str());
   }
@@ -196,22 +196,26 @@ struct Status : JobIdCommand<PoolExecutor> {
 
     if (it == ex.children.end()) {
       if (ex.finished.find(job_id) != ex.finished.end())
-        return psx::Completed<std::string>("Finished");
+        return psx::Completed<std::string>(
+            sutil::concat("JobID", job_id, "Status: Finished"));
 
-      return psx::Completed<std::string>(
-          "invalid job id or job already finished");
+      return psx::Completed<std::string>("Job not yet submitted");
     }
 
     switch (it->second.get_status()) {
     case ProcStatus::Active:
-      return psx::Completed<std::string>("Active");
+      return psx::Completed<std::string>(sutil::concat(
+          "JobID", job_id, "Status: Active")); // TODO: running for message
     case ProcStatus::Suspended:
-      return psx::Completed<std::string>("Suspended");
+      return psx::Completed<std::string>(
+          sutil::concat("JobID", job_id, "Status: Suspended"));
     default:
       throw std::runtime_error("invalid process status in children map");
     }
   }
 };
+
+// TODO: status-all is missing
 } // namespace
 
 namespace jms {
@@ -270,6 +274,7 @@ int pool_main(PoolId id, size_t njobs, const store::FileStore &root_store,
         psx::await(std::move(async)));
   }
 
+  // TODO: report the active jobs to the coord
   return 0;
 }
 } // namespace jms
