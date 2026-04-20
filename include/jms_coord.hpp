@@ -5,6 +5,7 @@
 #include "args.hpp"
 #include "async_ops.hpp"
 #include "command.hpp"
+#include "except.hpp"
 #include "executor.hpp"
 #include "file_store.hpp"
 #include "pipe.hpp"
@@ -66,12 +67,16 @@ class CoordExecutor {
   std::map<PoolId, PoolHandle> pools;
   PoolHandle *last_pool;
 
+  psx::ReadEnd shutdown;
+
   JobId next_job;
   PoolId next_pool;
 
 public:
   CoordExecutor(size_t jobs_per_pool, store::FileStore &store)
       : jobs_per_pool(jobs_per_pool), store(store), last_pool(nullptr),
+        shutdown(store.create_fifo(config::SHUTDOWN)
+                     .into_read(O_CLOEXEC | O_NONBLOCK)),
         next_job{0}, next_pool{0} {}
 
   std::map<PoolId, PoolHandle> &get_pools() { return pools; }
@@ -88,6 +93,48 @@ public:
       new_pool();
 
     return spawn_on_last_pool(job_id, std::move(path), std::move(args));
+  }
+
+  psx::ReadEnd &shutdown_pipe() { return shutdown; }
+
+  void terminate_pool(PoolId pool_id) {
+    {
+      // locate the correct pool
+      auto it = pools.find(pool_id);
+      if (it == pools.end()) {
+        std::cerr << "WARN: unknown pool attempted to shutdown" << std::endl;
+        return;
+      }
+    }
+
+    // this removes the pool right here
+    auto node = pools.extract(pool_id);
+
+    // send termination signal
+    node.mapped().get_proc().signal(SIGTERM);
+    try {
+      std::cout << "INFO: sent SIGTERM to pool " << pool_id
+                << " awaiting response" << std::endl;
+      // collect number of active jobs (should be 0...)
+      auto str = psx::await(ReadString(node.mapped().get_conn().r));
+      assert(std::stoi(str) == 0);
+    } catch (const psx::PosixException &e) {
+      std::cerr << "WARN: encountered problem while attempting to read "
+                   "response from pool "
+                << pool_id << ": " << e.what() << std::endl;
+      // if we fail to do that, send SIGKILL
+      node.mapped().get_proc().signal(SIGKILL);
+    }
+
+    // after here we can guarantee that the process will be ready to die or
+    // better yet dead. Block and wait for process to exit
+    int exit = node.mapped().get_proc().wait();
+    std::cout << "INFO: pool " << pool_id << " exited with status "
+              << WEXITSTATUS(exit) << std::endl;
+
+    // set last pool to nullptr if it was removed
+    if (&node.mapped() == last_pool)
+      last_pool = nullptr;
   }
 
 private:

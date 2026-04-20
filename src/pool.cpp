@@ -82,7 +82,7 @@ public:
   void set_status(ProcStatus status) { this->status = status; }
 };
 
-struct PoolExecutor {
+class PoolExecutor {
   PoolId id;
   const store::FileStore &root_store;
   size_t njobs;
@@ -90,12 +90,114 @@ struct PoolExecutor {
   std::map<pid_t, JobHandle *> by_pid;
   std::set<JobId> finished;
 
+  psx::DuplexConnection conn;
+  psx::WriteEnd shutdown;
+
   bool done;
 
-  PoolExecutor(PoolId id, const store::FileStore &root_store, size_t njobs)
-      : id(id), root_store(root_store), njobs(njobs), done(false) {}
+public:
+  PoolExecutor(PoolId id, const store::FileStore &root_store, size_t njobs,
+               psx::DuplexConnection conn, psx::WriteEnd shutdown)
+      : id(id), root_store(root_store), njobs(njobs), conn(std::move(conn)),
+        shutdown(std::move(shutdown)), done(false) {}
 
   size_t total_procs() const { return children.size() + finished.size(); }
+
+  void receive_sigterm() {
+    std::cerr << "INFO: got SIGTERM, shutting down..." << std::endl;
+    size_t active = children.size();
+
+    children.clear();
+    done = true;
+
+    // send response to parent (number of active processes)
+    psx::await(WriteString(std::to_string(active), conn.w));
+  }
+
+  void receive_sigchld() {
+    int res;
+
+    for (siginfo_t si{}; (res = waitid(P_ALL, -1, &si,
+                                       WNOHANG | WNOWAIT | WEXITED | WSTOPPED |
+                                           WCONTINUED)) == 0 &&
+                         si.si_signo == SIGCHLD;
+         si = {}) {
+      ProcStatus new_status = ProcStatus::Finished;
+
+      switch (si.si_code) {
+      case CLD_KILLED:
+      case CLD_DUMPED:
+      case CLD_EXITED: {
+        auto iter = by_pid.extract(si.si_pid);
+        auto node = children.extract(iter.mapped()->get_job_id());
+
+        auto exit = node.mapped().get_proc().wait_no_block();
+        std::cout << "INFO: job with id " << node.mapped().get_job_id()
+                  << " and PID " << si.si_pid << " had exited with exit code "
+                  << WEXITSTATUS(*exit) << std::endl;
+
+        finished.insert(node.mapped().get_job_id());
+        continue;
+      } break;
+
+      case CLD_CONTINUED:
+        new_status = ProcStatus::Active;
+        break;
+      case CLD_STOPPED:
+        new_status = ProcStatus::Suspended;
+        break;
+      }
+
+      auto iter = by_pid.at(si.si_pid);
+      auto &handle = children.at(iter->get_job_id());
+      handle.set_status(new_status);
+
+      std::cout << "INFO: job with id " << handle.get_job_id() << " and PID "
+                << si.si_pid << " has changed status to "
+                << (new_status == ProcStatus::Active ? "Active" : "Suspended")
+                << std::endl;
+
+      int res;
+      while ((res = waitid(P_PID, si.si_pid, nullptr,
+                           WNOHANG | WCONTINUED | WSTOPPED)) < 0 &&
+             errno == EINTR)
+        ;
+
+      if (res < 0)
+        std::cerr << "WARN: failed to wait on job: " << strerror(errno)
+                  << std::endl;
+    }
+
+    if (res < 0 && errno != ECHILD)
+      std::cerr << "WARN: failed to wait on updated job: " << strerror(errno)
+                << std::endl;
+
+    if (finished.size() == njobs) {
+      std::cout << "INFO: pool " << id << " is now requesting shutdown"
+                << std::endl;
+      shutdown.write_all(id);
+    }
+  }
+
+  std::optional<pid_t> new_job(JobId job_id, std::string path,
+                               std::vector<std::string> args) {
+    if (total_procs() == njobs)
+      return std::nullopt;
+
+    children.emplace(job_id, JobHandle(job_id, root_store, std::move(path),
+                                       std::move(args)));
+    auto &new_chld = children.at(job_id);
+    pid_t pid = new_chld.get_proc().get_pid();
+    by_pid.emplace(pid, &new_chld);
+
+    return {pid};
+  }
+
+  std::map<JobId, JobHandle> &get_children() { return children; }
+  const std::set<JobId> &get_finished() const { return finished; }
+  psx::DuplexConnection &get_conn() { return conn; }
+
+  bool should_continue() const { return !done; }
 };
 
 struct Submit : JobIdCommand<PoolExecutor> {
@@ -113,16 +215,11 @@ struct Submit : JobIdCommand<PoolExecutor> {
   }
 
   psx::Dynamic<std::string> execute(PoolExecutor &ex) override {
-    if (ex.total_procs() == ex.njobs)
+    auto pid = ex.new_job(job_id, std::move(path), std::move(args));
+    if (pid)
+      return psx::Completed<std::string>(std::to_string(*pid));
+    else
       return psx::Completed<std::string>("pool is full");
-
-    ex.children.emplace(job_id, JobHandle(job_id, ex.root_store,
-                                          std::move(path), std::move(args)));
-    auto &new_chld = ex.children.at(job_id);
-    pid_t pid = new_chld.get_proc().get_pid();
-    ex.by_pid.emplace(pid, &new_chld);
-
-    return psx::Completed<std::string>(std::to_string(pid));
   }
 };
 
@@ -130,9 +227,9 @@ struct Suspend : JobIdCommand<PoolExecutor> {
   Suspend(PeekableStream &peek)
       : JobIdCommand<PoolExecutor>(command::pool::mnem::SUSPEND, peek) {}
   psx::Dynamic<std::string> execute(PoolExecutor &ex) override {
-    auto it = ex.children.find(job_id);
+    auto it = ex.get_children().find(job_id);
 
-    if (it == ex.children.end())
+    if (it == ex.get_children().end())
       return psx::Completed<std::string>(
           "invalid job id or job already finished");
 
@@ -146,9 +243,9 @@ struct Resume : JobIdCommand<PoolExecutor> {
   Resume(PeekableStream &peek)
       : JobIdCommand<PoolExecutor>(command::pool::mnem::RESUME, peek) {}
   psx::Dynamic<std::string> execute(PoolExecutor &ex) override {
-    auto it = ex.children.find(job_id);
+    auto it = ex.get_children().find(job_id);
 
-    if (it == ex.children.end())
+    if (it == ex.get_children().end())
       return psx::Completed<std::string>(
           "invalid job id or job already finished");
 
@@ -162,7 +259,8 @@ struct ProcCount : jms::Command<PoolExecutor> {
       : Command<PoolExecutor>(command::pool::mnem::PROC_COUNT, peek) {}
 
   psx::Dynamic<std::string> execute(PoolExecutor &ex) override {
-    return psx::Completed<std::string>(std::to_string(ex.children.size()));
+    return psx::Completed<std::string>(
+        std::to_string(ex.get_children().size()));
   }
 };
 
@@ -173,7 +271,7 @@ struct ShowActive : jms::Command<PoolExecutor> {
   psx::Dynamic<std::string> execute(PoolExecutor &ex) override {
     std::ostringstream os{};
 
-    for (const auto &[id, handle] : ex.children)
+    for (const auto &[id, handle] : ex.get_children())
       if (handle.get_status() == ProcStatus::Active)
         os << "JobID " << id << std::endl;
 
@@ -188,7 +286,7 @@ struct ShowFinished : jms::Command<PoolExecutor> {
   psx::Dynamic<std::string> execute(PoolExecutor &ex) override {
     std::ostringstream os{};
 
-    for (const auto &id : ex.finished)
+    for (const auto &id : ex.get_finished())
       os << "JobID " << id << std::endl;
 
     return psx::Completed<std::string>(os.str());
@@ -199,10 +297,10 @@ struct Status : JobIdCommand<PoolExecutor> {
   Status(PeekableStream &peek)
       : JobIdCommand<PoolExecutor>(command::pool::mnem::STATUS, peek) {}
   psx::Dynamic<std::string> execute(PoolExecutor &ex) override {
-    auto it = ex.children.find(job_id);
+    auto it = ex.get_children().find(job_id);
 
-    if (it == ex.children.end()) {
-      if (ex.finished.find(job_id) != ex.finished.end())
+    if (it == ex.get_children().end()) {
+      if (ex.get_finished().find(job_id) != ex.get_finished().end())
         return psx::Completed<std::string>(
             sutil::concat("JobID", job_id, "Status: Finished"));
 
@@ -223,87 +321,20 @@ struct Status : JobIdCommand<PoolExecutor> {
 };
 
 // TODO: status-all is missing
-void receive_sigchld(PoolExecutor &ex) {
-  int res;
-
-  for (siginfo_t si{}; (res = waitid(P_ALL, -1, &si,
-                                     WNOHANG | WNOWAIT | WEXITED | WSTOPPED |
-                                         WCONTINUED)) == 0 &&
-                       si.si_signo == SIGCHLD;
-       si = {}) {
-    ProcStatus new_status = ProcStatus::Finished;
-
-    switch (si.si_code) {
-    case CLD_KILLED:
-    case CLD_DUMPED:
-    case CLD_EXITED: {
-      std::cout << "This is now running" << std::endl;
-      auto iter = ex.by_pid.extract(si.si_pid);
-      auto node = ex.children.extract(iter.mapped()->get_job_id());
-
-      auto exit = node.mapped().get_proc().wait_no_block();
-      std::cout << "INFO: job with id " << node.mapped().get_job_id()
-                << " and PID " << si.si_pid << " had exited with exit code "
-                << WEXITSTATUS(*exit) << std::endl;
-
-      ex.finished.insert(node.mapped().get_job_id());
-      continue;
-    } break;
-
-    case CLD_CONTINUED:
-      new_status = ProcStatus::Active;
-      break;
-    case CLD_STOPPED:
-      new_status = ProcStatus::Suspended;
-      break;
-    }
-
-    auto iter = ex.by_pid.at(si.si_pid);
-    auto &handle = ex.children.at(iter->get_job_id());
-    handle.set_status(new_status);
-
-    std::cout << "INFO: job with id " << handle.get_job_id() << " and PID "
-              << si.si_pid << " has changed status to "
-              << (new_status == ProcStatus::Active ? "Active" : "Suspended")
-              << std::endl;
-
-    int res;
-    while ((res = waitid(P_PID, si.si_pid, nullptr,
-                         WNOHANG | WCONTINUED | WSTOPPED)) < 0 &&
-           errno == EINTR)
-      ;
-
-    if (res < 0)
-      std::cerr << "WARN: failed to wait on job: " << strerror(errno)
-                << std::endl;
-  }
-
-  if (res < 0)
-    std::cerr << "WARN: failed to wait on updated job: " << strerror(errno)
-              << std::endl;
-}
-
-void receive_sigterm(psx::WriteEnd &w, PoolExecutor &ex) {
-  std::cerr << "INFO: got SIGTERM, shutting down..." << std::endl;
-  size_t active = ex.children.size();
-
-  ex.children.clear();
-  ex.done = true;
-
-  psx::await(WriteString(std::to_string(active), w));
-}
 } // namespace
 
 namespace jms {
 int pool_main(PoolId id, size_t njobs, const store::FileStore &root_store,
               psx::DuplexConnection &conn) {
-  auto [r, w] = std::move(conn);
+  auto shutdown = root_store.open_fifo("shutdown").into_write(O_CLOEXEC);
 
   signals::SignalScope scope;
-  PoolExecutor ex(id, root_store, njobs);
+  PoolExecutor ex(id, root_store, njobs, std::move(conn), std::move(shutdown));
+
+  auto &[r, w] = ex.get_conn();
 
   signals::block_unwanted();
-  while (!ex.done) {
+  while (ex.should_continue()) {
     auto async = psx::select(ReadString(r), scope.on_signal<SIGTERM>(),
                              scope.on_signal<SIGCHLD>());
     psx::select_visit(
@@ -324,10 +355,8 @@ int pool_main(PoolId id, size_t njobs, const store::FileStore &root_store,
                 psx::await(WriteString(e.what(), w));
               }
             },
-            [&](signals::Signal<SIGCHLD>) { return receive_sigchld(ex); },
-            [&, &w = w](signals::Signal<SIGTERM>) {
-              return receive_sigterm(w, ex);
-            },
+            [&](signals::Signal<SIGCHLD>) { return ex.receive_sigchld(); },
+            [&](signals::Signal<SIGTERM>) { return ex.receive_sigterm(); },
         },
         psx::await(std::move(async)));
   }

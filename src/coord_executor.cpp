@@ -12,8 +12,8 @@ PoolHandle PoolHandle::make_pool(const store::FileStore &store, PoolId id,
   auto fw = substore.create_fifo("out");
 
   psx::Process proc([&](auto) {
-    auto r = fr.into_read(0);
-    auto w = fw.into_write(0);
+    auto r = fr.into_read(O_CLOEXEC);
+    auto w = fw.into_write(O_CLOEXEC);
 
     psx::DuplexConnection conn(std::move(r), std::move(w));
     int res = pool_main(id, njobs, store, conn);

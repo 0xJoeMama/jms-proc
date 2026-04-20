@@ -1,5 +1,4 @@
 #include <algorithm>
-#include <numeric>
 
 #include "async_ops.hpp"
 #include "executor.hpp"

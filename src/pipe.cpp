@@ -152,16 +152,18 @@ Process::Process(std::function<int(pid_t)> f) : pid(-1) {
 Process::Process(Process &&other) noexcept : pid(other.pid) { other.pid = -1; }
 
 int Process::wait() {
+  int exit;
   int res;
-  if (waitpid(pid, &res, 0) < 0) {
-    std::ostringstream os{};
-    os << "could not wait for child with pid: " << pid;
-    throw ErrnoException(os.str());
+  while ((res = waitpid(pid, &exit, 0)) < 0) {
+    if (errno == EINTR)
+      continue;
+
+    throw ErrnoException(
+        sutil::concat("could not wait for child with pid:", pid));
   }
 
   pid = -1;
-
-  return res;
+  return exit;
 }
 
 std::optional<int> Process::wait_no_block() {
