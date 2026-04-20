@@ -1,6 +1,6 @@
 #include <cassert>
+#include <chrono>
 #include <ctime>
-#include <stdexcept>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -16,10 +16,26 @@
 using namespace jms;
 
 namespace {
+std::ostream &operator<<(std::ostream &os, ProcStatus status) {
+  switch (status) {
+  case ProcStatus::Finished:
+    return os << "Finished";
+  case ProcStatus::Active:
+    return os << "Active";
+  case ProcStatus::Suspended:
+    return os << "Suspended";
+  default:
+    todo("unreachable");
+  };
+}
+
+namespace chr = std::chrono;
+
 class JobHandle {
   JobId job_id;
   ProcStatus status;
   psx::Process proc;
+  chr::time_point<chr::system_clock> last_start;
 
   static std::string make_output_dir(JobId job_id, pid_t pid) {
     std::ostringstream os{};
@@ -72,15 +88,35 @@ public:
                     << std::endl;
 
           return 1;
-        }) {
+        }),
+        last_start(chr::system_clock::now()) {
     status = ProcStatus::Active;
   }
 
   psx::Process &get_proc() { return proc; }
   JobId get_job_id() const { return job_id; }
   ProcStatus get_status() const { return status; }
-  void set_status(ProcStatus status) { this->status = status; }
+  void set_status(ProcStatus status) {
+    this->status = status;
+
+    if (status == jms::ProcStatus::Active)
+      last_start = chr::system_clock::now();
+  }
+
+  const auto &get_last_start() const { return last_start; }
 };
+
+std::ostream &operator<<(std::ostream &os, const JobHandle &job) {
+  os << "JobID " << job.get_job_id() << " Status: " << job.get_status();
+
+  if (job.get_status() == jms::ProcStatus::Active) {
+    auto now = chr::system_clock::now();
+    auto diff = chr::duration_cast<chr::seconds>(now - job.get_last_start());
+    os << " (running for " << diff.count() << " seconds)";
+  }
+
+  return os;
+}
 
 class PoolExecutor {
   PoolId id;
@@ -153,8 +189,7 @@ public:
       handle.set_status(new_status);
 
       std::cout << "INFO: job with id " << handle.get_job_id() << " and PID "
-                << si.si_pid << " has changed status to "
-                << (new_status == ProcStatus::Active ? "Active" : "Suspended")
+                << si.si_pid << " has changed status to " << new_status
                 << std::endl;
 
       int res;
@@ -299,28 +334,50 @@ struct Status : JobIdCommand<PoolExecutor> {
   psx::Dynamic<std::string> execute(PoolExecutor &ex) override {
     auto it = ex.get_children().find(job_id);
 
+    std::ostringstream os{};
+
     if (it == ex.get_children().end()) {
-      if (ex.get_finished().find(job_id) != ex.get_finished().end())
-        return psx::Completed<std::string>(
-            sutil::concat("JobID", job_id, "Status: Finished"));
+      if (ex.get_finished().find(job_id) != ex.get_finished().end()) {
+        os << "JobID " << job_id << " Status: " << ProcStatus::Finished;
+        return psx::Completed<std::string>(os.str());
+      }
 
       return psx::Completed<std::string>("Job not yet submitted");
     }
 
-    switch (it->second.get_status()) {
-    case ProcStatus::Active:
-      return psx::Completed<std::string>(sutil::concat(
-          "JobID", job_id, "Status: Active")); // TODO: running for message
-    case ProcStatus::Suspended:
-      return psx::Completed<std::string>(
-          sutil::concat("JobID", job_id, "Status: Suspended"));
-    default:
-      throw std::runtime_error("invalid process status in children map");
-    }
+    os << it->second;
+    return psx::Completed<std::string>(os.str());
   }
 };
 
-// TODO: status-all is missing
+struct StatusAll : public jms::Command<PoolExecutor> {
+  std::optional<chr::time_point<chr::system_clock>> since;
+
+  explicit StatusAll(PeekableStream &peek)
+      : jms::Command<PoolExecutor>(command::pool::mnem::STATUS_ALL, peek) {
+    size_t n;
+    if (peek.stream() >> n) {
+      since = chr::system_clock::now() - chr::seconds(n);
+    } else {
+      since = std::nullopt;
+    }
+  }
+
+  psx::Dynamic<std::string> execute(PoolExecutor &ex) {
+    std::ostringstream os{};
+    for (const auto &[job_id, handle] : ex.get_children()) {
+      if (since && handle.get_last_start() < *since)
+        continue;
+
+      os << handle << std::endl;
+    }
+
+    for (const auto job_id : ex.get_finished())
+      os << "JobID " << job_id << " Status: Finished" << std::endl;
+
+    return psx::Completed<std::string>(os.str());
+  }
+};
 } // namespace
 
 namespace jms {
@@ -344,7 +401,7 @@ int pool_main(PoolId id, size_t njobs, const store::FileStore &root_store,
                 auto cmd =
                     jms::parse_command<PoolExecutor, Submit, Resume, Suspend,
                                        ProcCount, ShowActive, ShowFinished,
-                                       Status>(std::move(cmdstr));
+                                       Status, StatusAll>(std::move(cmdstr));
 
                 psx::await(cmd->execute(ex).then([&w = w](auto &&res) {
                   return WriteString(std::move(res), w);

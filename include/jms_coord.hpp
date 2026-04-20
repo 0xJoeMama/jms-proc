@@ -207,9 +207,19 @@ struct Status : public jms::JobIdCommand<CoordExecutor> {
   psx::Dynamic<std::string> execute(CoordExecutor &ex) override;
 };
 
-struct StatusAll : public jms::JobIdCommand<CoordExecutor> {
+struct StatusAll : public jms::Command<CoordExecutor> {
+  std::optional<size_t> n;
+
   explicit StatusAll(PeekableStream &peek)
-      : jms::JobIdCommand<CoordExecutor>(mnem::STATUS_ALL, peek) {}
+      : jms::Command<CoordExecutor>(mnem::STATUS_ALL, peek) {
+    size_t n;
+    if (peek.stream() >> n) {
+      this->n = n;
+    } else {
+      this->n = std::nullopt;
+    }
+  }
+
   psx::Dynamic<std::string> execute(CoordExecutor &ex) override;
 };
 } // namespace command::coord

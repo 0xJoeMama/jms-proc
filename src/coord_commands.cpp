@@ -157,3 +157,30 @@ psx::Dynamic<std::string> Status::execute(CoordExecutor &ex) {
     return psx::Completed<std::string>("Job not submitted yet");
   }
 }
+
+psx::Dynamic<std::string> StatusAll::execute(CoordExecutor &ex) {
+  psx::Join<std::string> pool_responses;
+
+  for (PoolId id = 0; id < ex.get_next_pool(); id++) {
+    auto it = ex.get_pools().find(id);
+    if (it != ex.get_pools().end()) {
+      pool_responses.push(
+          jms::send_command(it->second.get_conn(), coord::mnem::STATUS_ALL));
+    } else {
+      for (JobId jid = id * ex.get_pool_size();
+           jid < (id + 1) * ex.get_pool_size(); jid++)
+        pool_responses.push(
+            psx::Completed(sutil::concat("JobID", jid, "Status: Finished\n")));
+    }
+  }
+
+  return pool_responses.map([](auto responses) {
+    std::ostringstream os{};
+
+    for (const auto &res : responses) {
+      os << res;
+    }
+
+    return os.str();
+  });
+}

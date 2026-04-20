@@ -20,7 +20,7 @@ std::unique_ptr<jms::Command<CoordExecutor>>
 parse_coord_command(std::string cmd_str) {
   using namespace jms::command::coord;
   return parse_command<CoordExecutor, Submit, ShowPools, ShowFinished,
-                       ShowActive, Shutdown, Suspend, Resume, Status>(
+                       ShowActive, Shutdown, Suspend, Resume, Status, StatusAll>(
       std::move(cmd_str));
 }
 
