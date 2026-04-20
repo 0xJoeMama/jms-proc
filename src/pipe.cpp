@@ -166,6 +166,17 @@ int Process::wait() {
   return exit;
 }
 
+int Process::wait_weak() {
+  int exit;
+  int res;
+  if ((res = waitpid(pid, &exit, 0)) < 0)
+    throw ErrnoException(
+        sutil::concat("could not wait for child with pid:", pid));
+
+  pid = -1;
+  return exit;
+}
+
 std::optional<int> Process::wait_no_block() {
   int res;
   pid_t stat;
@@ -234,7 +245,8 @@ Process::~Process() noexcept {
     // that process as an example to others to never mess with our timing
     alarm(1);
 
-    int exit = wait();
+    // we need weak as it can be interrupted by signals (which is exactly what we want
+    int exit = wait_weak();
     std::cerr << "INFO: process with PID " << pid
               << " has been forcibly terminated. Exit code: "
               << WEXITSTATUS(exit) << std::endl;

@@ -144,6 +144,7 @@ public:
   // blocking version
   int wait();
   std::optional<int> wait_no_block();
+  int wait_weak();
 
   // send signal to process
   void signal(int sig, std::variant<int, void *> arg = nullptr) const;
