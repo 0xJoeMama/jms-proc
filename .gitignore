@@ -1,5 +1,6 @@
 jms_coord
 jms_console
+command_tests
 pool_tests
 store_tests
 fifo_tests
