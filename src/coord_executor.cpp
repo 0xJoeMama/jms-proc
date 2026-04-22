@@ -53,6 +53,7 @@ PoolHandle &CoordExecutor::new_pool() {
 
   PoolHandle &res = pools.at(id);
   last_pool = &res;
+  by_pid.try_emplace(res.get_proc().get_pid(), &res);
 
   return res;
 }

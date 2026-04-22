@@ -65,9 +65,8 @@ class CoordExecutor {
   const size_t jobs_per_pool;
   store::FileStore &store;
   std::map<PoolId, PoolHandle> pools;
+  std::map<pid_t, PoolHandle *> by_pid;
   PoolHandle *last_pool;
-
-  psx::ReadEnd shutdown;
 
   JobId next_job;
   PoolId next_pool;
@@ -75,14 +74,13 @@ class CoordExecutor {
 public:
   CoordExecutor(size_t jobs_per_pool, store::FileStore &store)
       : jobs_per_pool(jobs_per_pool), store(store), last_pool(nullptr),
-        shutdown(store.create_fifo(config::SHUTDOWN)
-                     .into_read(O_CLOEXEC | O_NONBLOCK)),
         next_job{0}, next_pool{0} {}
 
   std::map<PoolId, PoolHandle> &get_pools() { return pools; }
   const std::map<PoolId, PoolHandle> &get_pools() const { return pools; }
   PoolId get_next_pool() const { return next_pool; }
   size_t get_pool_size() const { return jobs_per_pool; }
+  size_t get_total_jobs() const { return next_job; }
 
   PoolHandle *pool_for_job(JobId id);
 
@@ -95,29 +93,29 @@ public:
     return spawn_on_last_pool(job_id, std::move(path), std::move(args));
   }
 
-  psx::ReadEnd &shutdown_pipe() { return shutdown; }
-
-  void terminate_pool(PoolId pool_id) {
+  size_t terminate_pool(PoolId pool_id) {
     {
       // locate the correct pool
       auto it = pools.find(pool_id);
       if (it == pools.end()) {
         std::cerr << "WARN: unknown pool attempted to shutdown" << std::endl;
-        return;
+        return 0;
       }
     }
 
     // this removes the pool right here
     auto node = pools.extract(pool_id);
+    by_pid.extract(node.mapped().get_proc().get_pid());
 
     // send termination signal
     node.mapped().get_proc().signal(SIGTERM);
+    size_t res;
     try {
       std::cout << "INFO: sent SIGTERM to pool " << pool_id
                 << " awaiting response" << std::endl;
       // collect number of active jobs (should be 0...)
       auto str = psx::await(ReadString(node.mapped().get_conn().r));
-      assert(std::stoi(str) == 0);
+      res = std::stoi(str);
     } catch (const psx::PosixException &e) {
       std::cerr << "WARN: encountered problem while attempting to read "
                    "response from pool "
@@ -135,6 +133,37 @@ public:
     // set last pool to nullptr if it was removed
     if (&node.mapped() == last_pool)
       last_pool = nullptr;
+
+    return res;
+  }
+
+  void receive_sigchld() {
+
+    for (siginfo_t si{};
+         waitid(P_ALL, -1, &si, WNOHANG | WNOWAIT | WEXITED) == 0 &&
+         si.si_signo == SIGCHLD;
+         si = {}) {
+      std::cout << "INFO: coord just got SIGCHLD from " << si.si_pid
+                << std::endl;
+      pid_t pool_pid = si.si_pid;
+      auto it = by_pid.find(pool_pid);
+
+      if (it == by_pid.end()) {
+        std::cerr << "WARN: spurious exit of unknown pool child with pid "
+                  << pool_pid << std::endl;
+        if (waitpid(pool_pid, nullptr, WNOHANG) < 0) {
+          std::cerr << "WARN: failed to wait on unknown pool child with pid "
+                    << pool_pid << ": " << strerror(errno) << std::endl;
+        }
+
+        continue;
+      }
+
+      auto pool_id = it->second->pool_id();
+      std::cout << "INFO: coord will terminate pool " << pool_id << std::endl;
+      // otherwise it is a known pool, so attempt to terminate it
+      terminate_pool(pool_id);
+    }
   }
 
 private:
@@ -163,7 +192,10 @@ public:
   psx::Dynamic<std::string> execute(CoordExecutor &ex) override;
 };
 
-struct ShutdownException {};
+struct ShutdownException {
+  size_t n_active;
+  size_t n_finished;
+};
 
 struct Shutdown : public jms::Command<CoordExecutor> {
   explicit Shutdown(PeekableStream &peek)

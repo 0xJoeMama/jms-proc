@@ -127,15 +127,14 @@ class PoolExecutor {
   std::set<JobId> finished;
 
   psx::DuplexConnection conn;
-  psx::WriteEnd shutdown;
 
   bool done;
 
 public:
   PoolExecutor(PoolId id, const store::FileStore &root_store, size_t njobs,
-               psx::DuplexConnection conn, psx::WriteEnd shutdown)
+               psx::DuplexConnection conn)
       : id(id), root_store(root_store), njobs(njobs), conn(std::move(conn)),
-        shutdown(std::move(shutdown)), done(false) {}
+        done(false) {}
 
   size_t total_procs() const { return children.size() + finished.size(); }
 
@@ -208,9 +207,9 @@ public:
                 << std::endl;
 
     if (finished.size() == njobs) {
-      std::cout << "INFO: pool " << id << " is now requesting shutdown"
+      std::cout << "INFO: pool " << id << " has served finished its jobs"
                 << std::endl;
-      shutdown.write_all(id);
+      done = true;
     }
   }
 
@@ -270,7 +269,8 @@ struct Suspend : JobIdCommand<PoolExecutor> {
 
     it->second.get_proc().signal(SIGSTOP);
 
-    return psx::Completed<std::string>("ok");
+    return psx::Completed<std::string>(
+        sutil::concat("Sent suspend signal to JobID", job_id));
   }
 };
 
@@ -285,7 +285,8 @@ struct Resume : JobIdCommand<PoolExecutor> {
           "invalid job id or job already finished");
 
     it->second.get_proc().signal(SIGCONT);
-    return psx::Completed<std::string>("ok");
+    return psx::Completed<std::string>(
+        sutil::concat("Sent resume signal to JobID", job_id));
   }
 };
 
@@ -383,10 +384,8 @@ struct StatusAll : public jms::Command<PoolExecutor> {
 namespace jms {
 int pool_main(PoolId id, size_t njobs, const store::FileStore &root_store,
               psx::DuplexConnection &conn) {
-  auto shutdown = root_store.open_fifo("shutdown").into_write(O_CLOEXEC);
-
   signals::SignalScope scope;
-  PoolExecutor ex(id, root_store, njobs, std::move(conn), std::move(shutdown));
+  PoolExecutor ex(id, root_store, njobs, std::move(conn));
 
   auto &[r, w] = ex.get_conn();
 

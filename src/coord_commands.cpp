@@ -1,6 +1,8 @@
 #include <algorithm>
+#include <numeric>
 
 #include "async_ops.hpp"
+#include "except.hpp"
 #include "executor.hpp"
 #include "jms_coord.hpp"
 #include "poll.hpp"
@@ -12,10 +14,11 @@ psx::Dynamic<std::string> ShowActive::execute(CoordExecutor &ex) {
   psx::Join<std::string> active;
   for (auto &[_, pool] : ex.get_pools()) {
     // send message to all pools
-    active.push(jms::send_command(pool.get_conn(), pool::mnem::SHOW_ACTIVE));
+    active.push(jms::send_command(pool.get_conn(), pool::mnem::SHOW_ACTIVE)
+                    .except<psx::PosixException>([](auto) { return "\n"; }));
   }
 
-  return active.map([](auto &&actives) {
+  return active.map([](auto actives) {
     std::ostringstream os{};
 
     os << "Active jobs:\n";
@@ -42,8 +45,17 @@ psx::Dynamic<std::string> ShowFinished::execute(CoordExecutor &ex) {
       active.push(psx::Completed(os.str()));
     } else {
       // send message to all pools
-      active.push(jms::send_command(iter->second.get_conn(),
-                                    pool::mnem::SHOW_FINISHED));
+      active.push(
+          jms::send_command(iter->second.get_conn(), pool::mnem::SHOW_FINISHED)
+              .except<psx::PosixException>(
+                  [pool_id = i, jobs_per_pool = ex.get_pool_size()](auto) {
+                    std::ostringstream os{};
+                    for (JobId i = pool_id * jobs_per_pool;
+                         i < (pool_id + 1) * jobs_per_pool; i++)
+                      os << "JobID " << i << std::endl;
+
+                    return os.str();
+                  }));
     }
   }
 
@@ -57,6 +69,7 @@ psx::Dynamic<std::string> ShowFinished::execute(CoordExecutor &ex) {
     return os.str();
   });
 }
+
 psx::Dynamic<std::string> Resume::execute(CoordExecutor &ex) {
   PoolHandle *target_pool = ex.pool_for_job(job_id);
 
@@ -67,7 +80,7 @@ psx::Dynamic<std::string> Resume::execute(CoordExecutor &ex) {
 
   return jms::send_command(target_pool->get_conn(),
                            sutil::concat(pool::mnem::RESUME, job_id))
-      .map([this](auto) {
+      .except<psx::PosixException>([job_id = this->job_id](auto) {
         return sutil::concat("Sent resume signal to JobID", job_id);
       });
 }
@@ -82,7 +95,7 @@ psx::Dynamic<std::string> Suspend::execute(CoordExecutor &ex) {
 
   return jms::send_command(target_pool->get_conn(),
                            sutil::concat(pool::mnem::SUSPEND, job_id))
-      .map([this](auto) {
+      .except<psx::PosixException>([job_id = this->job_id](auto) {
         return sutil::concat("Sent suspend signal to JobID", job_id);
       });
 }
@@ -98,29 +111,38 @@ psx::Dynamic<std::string> Submit::execute(CoordExecutor &ex) {
   });
 }
 
-psx::Dynamic<std::string> Shutdown::execute(CoordExecutor &) {
-  // psx::Join<size_t> statuses;
-  //
-  // for (auto &[job, handle] : ex.get_pools()) {
-  //   handle.get_proc().signal(SIGTERM);
-  //   statuses.push(ReadString(handle.get_conn().r).map([](std::string &&res) {
-  //     try {
-  //       return std::stoi(std::move(res));
-  //     } catch (...) {
-  //       return 0;
-  //     }
-  //   }));
-  // }
-  //
-  // return statuses
-  //     .map([](auto active) {
-  //       return std::accumulate(active.cbegin(), active.cend(), 0);
-  //     })
-  //     .map([&](auto total_active) {
-  //       return sutil::concat("Served", ex.get_next_pool(), "jobs,",
-  //                            total_active, "were still in progress");
-  //     });
-  throw ShutdownException();
+psx::Dynamic<std::string> Shutdown::execute(CoordExecutor &ex) {
+  psx::Join<size_t> statuses;
+
+  for (auto &[pool, handle] : ex.get_pools()) {
+    handle.get_proc().signal(SIGTERM);
+    auto curr = ReadString(handle.get_conn().r)
+                    .map([](std::string &&res) {
+                      try {
+                        return size_t{std::stoull(std::move(res))};
+                      } catch (...) {
+                        return size_t{0};
+                      }
+                    })
+                    .except<psx::PosixException>([pool_id = pool](auto) {
+                      std::cerr << "WARN: failed to properly get amount of "
+                                   "active jobs for pool "
+                                << pool_id << std::endl;
+
+                      return size_t{0};
+                    });
+
+    statuses.push(std::move(curr));
+  }
+
+  auto res = psx::await(statuses.map([](auto active) {
+    return std::accumulate(active.cbegin(), active.cend(), size_t{0});
+  }));
+
+  throw ShutdownException{
+      res,
+      ex.get_total_jobs() - res,
+  };
 }
 
 psx::Dynamic<std::string> ShowPools::execute(CoordExecutor &ex) {
@@ -148,7 +170,10 @@ psx::Dynamic<std::string> Status::execute(CoordExecutor &ex) {
   PoolHandle *handle = ex.pool_for_job(job_id);
   if (handle)
     return jms::send_command(handle->get_conn(),
-                             sutil::concat(pool::mnem::STATUS, job_id));
+                             sutil::concat(pool::mnem::STATUS, job_id))
+        .except<psx::PosixException>([job_id = job_id](auto) {
+          return sutil::concat("JobID", job_id, "Status: Finished");
+        });
 
   if (job_id / ex.get_pool_size() < ex.get_next_pool()) {
     return psx::Completed<std::string>(
@@ -165,7 +190,16 @@ psx::Dynamic<std::string> StatusAll::execute(CoordExecutor &ex) {
     auto it = ex.get_pools().find(id);
     if (it != ex.get_pools().end()) {
       pool_responses.push(
-          jms::send_command(it->second.get_conn(), coord::mnem::STATUS_ALL));
+          jms::send_command(it->second.get_conn(), coord::mnem::STATUS_ALL)
+              .except<psx::PosixException>(
+                  [pool_id = id, jobs_per_pool = ex.get_pool_size()](auto) {
+                    std::ostringstream os{};
+                    for (JobId i = pool_id * jobs_per_pool;
+                         i < (pool_id + 1) * jobs_per_pool; i++)
+                      os << "JobID " << i << " Status: Finished" << std::endl;
+
+                    return os.str();
+                  }));
     } else {
       for (JobId jid = id * ex.get_pool_size();
            jid < (id + 1) * ex.get_pool_size(); jid++)

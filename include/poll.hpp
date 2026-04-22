@@ -44,6 +44,7 @@ template <typename T, typename Self> class Async : public AsyncBase<T> {
 public:
   template <typename Fn> auto then(Fn fn);
   template <typename Fn> auto map(Fn fn);
+  template <typename Ex, typename Fn> auto except(Fn fn);
 };
 
 template <typename T> class Dynamic : public Async<T, Dynamic<T>> {
@@ -124,6 +125,29 @@ public:
   }
 };
 
+template <typename Ex, typename R, typename Fn>
+class Except : public Async<typename R::Result, Except<Ex, R, Fn>> {
+  R r;
+  Fn fn;
+
+public:
+  Except(R &&r, Fn fn) : r(std::move(r)), fn(std::move(fn)) {}
+
+  using Result = typename R::Result;
+
+  PollStatus<Result> poll(const struct pollfd &fd) override {
+    try {
+      return r.poll(fd);
+    } catch (const Ex &e) {
+      return fn(e);
+    }
+  }
+
+  void make_wakers(WakerCollector &collector) override {
+    r.make_wakers(collector);
+  }
+};
+
 template <typename T, typename Self>
 template <typename Fn>
 auto Async<T, Self>::then(Fn fn) {
@@ -135,6 +159,13 @@ template <typename T, typename Self>
 template <typename Fn>
 auto Async<T, Self>::map(Fn fn) {
   return Map<Self, Fn>(std::move(static_cast<Self &>(*this)), fn);
+}
+
+template <typename T, typename Self>
+template <typename Ex, typename Fn>
+auto Async<T, Self>::except(Fn fn) {
+  return Except<Ex, Self, Fn>(std::move(static_cast<Self &>(*this)),
+                              std::move(fn));
 }
 
 template <typename U> class Join : public Async<std::vector<U>, Join<U>> {

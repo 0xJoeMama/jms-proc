@@ -20,36 +20,12 @@ std::unique_ptr<jms::Command<CoordExecutor>>
 parse_coord_command(std::string cmd_str) {
   using namespace jms::command::coord;
   return parse_command<CoordExecutor, Submit, ShowPools, ShowFinished,
-                       ShowActive, Shutdown, Suspend, Resume, Status, StatusAll>(
-      std::move(cmd_str));
+                       ShowActive, Shutdown, Suspend, Resume, Status,
+                       StatusAll>(std::move(cmd_str));
 }
 
-class TerminatePool : public psx::Async<PoolId, TerminatePool> {
-  CoordExecutor &ex;
-
-public:
-  TerminatePool(CoordExecutor &ex) : ex(ex) {}
-
-  psx::PollStatus<Result> poll(const struct pollfd &) override {
-    PoolId id;
-    try {
-      ex.shutdown_pipe().read_all(id);
-    } catch (psx::EofException &) {
-      return psx::Continue{};
-    }
-
-    return id;
-  }
-
-  void make_wakers(psx::WakerCollector &collector) override {
-    if (ex.get_pools().size() == 0)
-      return;
-
-    collector(pollfd{ex.shutdown_pipe().get_fd(), POLLIN, 0});
-  }
-};
-
-void handle_connection(CoordExecutor &ex, psx::DuplexConnection conn) {
+void handle_connection(jms::signals::SignalScope &scope, CoordExecutor &ex,
+                       psx::DuplexConnection conn) {
   auto [r, w] = std::move(conn);
   for (;;) {
     try {
@@ -74,19 +50,26 @@ void handle_connection(CoordExecutor &ex, psx::DuplexConnection conn) {
         }
       });
 
-      auto result =
-          psx::await(psx::select(std::move(cmd_async), TerminatePool(ex)));
+      auto result = psx::await(
+          psx::select(std::move(cmd_async), scope.on_signal<SIGCHLD>()));
 
-      psx::select_visit(
-          Match{[&](PoolId pool_id) { return ex.terminate_pool(pool_id); },
-                [](auto) {}},
-          std::move(result));
+      psx::select_visit(Match{[&](jms::signals::Signal<SIGCHLD>) {
+                                return ex.receive_sigchld();
+                              },
+                              [](auto) {}},
+                        std::move(result));
     } catch (const psx::EofException &e) {
       std::cout << "Client disconnected: " << e.what() << std::endl;
       break;
     } catch (const psx::ErrnoException &e) {
       std::cerr << "ERROR: could not handle client: " << e.what() << std::endl;
       break;
+    } catch (command::coord::ShutdownException &e) {
+      psx::await(WriteString(sutil::concat("Served", e.n_finished, "jobs.",
+                                           e.n_active, "were still active"),
+                             w));
+
+      throw e;
     }
   }
 }
@@ -95,22 +78,27 @@ void run(CoordConfig &cfg) {
   store::FileStore store(cfg.get<RunPath>());
   CoordExecutor ex(cfg.get<JobsPerPool>(), store);
 
+  jms::signals::SignalScope scope;
+
   try {
     for (;;) {
       auto jms_in = store.create_fifo(config::JMS_IN);
       auto jms_out = store.create_fifo(config::JMS_OUT);
 
-      auto result = psx::await(
-          psx::select(EstablishConnection(jms_in, jms_out), TerminatePool(ex)));
+      auto result = psx::await(psx::select(EstablishConnection(jms_in, jms_out),
+                                           scope.on_signal<SIGCHLD>()));
 
-      psx::select_visit(
-          Match{[&](psx::DuplexConnection conn) {
-                  return handle_connection(ex, std::move(conn));
-                },
-                [&](PoolId pool_id) { return ex.terminate_pool(pool_id); }},
-          std::move(result));
+      psx::select_visit(Match{[&](psx::DuplexConnection conn) {
+                                return handle_connection(scope, ex,
+                                                         std::move(conn));
+                              },
+                              [&](jms::signals::Signal<SIGCHLD>) {
+                                return ex.receive_sigchld();
+                              }},
+                        std::move(result));
     }
-  } catch (command::coord::ShutdownException &) {
+  } catch (const command::coord::ShutdownException &) {
+    // return here
   }
 }
 } // namespace
