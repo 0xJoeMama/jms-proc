@@ -38,11 +38,13 @@ struct ConsoleConfig : Command<ConsoleConfig, Field<WritePath>, Field<ReadPath>,
 };
 
 namespace {
-void handle_command(psx::DuplexConnection &conn, const std::string &op) {
+bool handle_command(psx::DuplexConnection &conn, const std::string &op) {
   psx::await(jms::WriteString(op, conn.w));
 
   auto response = psx::await(jms::ReadString(conn.r));
   std::cout << response << std::endl;
+
+  return response.find("Served") != 0;
 }
 
 std::ostream &print_prompt(size_t &line) {
@@ -86,7 +88,8 @@ void run(ConsoleConfig cfg) {
 
   while (print_prompt(command_cnt), std::getline(std::cin, op))
     if (!op.empty())
-      handle_command(conn, op);
+      if (!handle_command(conn, op))
+        break;
 
   std::cout << "EOF given. Terminating..." << std::endl;
 }
