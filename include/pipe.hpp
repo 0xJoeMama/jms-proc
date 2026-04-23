@@ -1,38 +1,27 @@
 #pragma once
 
-#include <climits>
 #include <fcntl.h>
 #include <functional>
 #include <iostream>
+#include <limits.h>
 #include <optional>
 #include <string>
 #include <unistd.h>
 #include <variant>
 
-#include "except.hpp"
-
 namespace psx {
 class OwnedFd {
   int fd;
 
-  // TODO: move this implementation to another file
 public:
-  OwnedFd(int fd) : fd(fd) {
-    if (fd < 0)
-      throw psx::ErrnoException("invalid file descriptor");
-  }
-
+  OwnedFd(int fd);
   OwnedFd(const OwnedFd &) = delete;
-  OwnedFd(OwnedFd &&fd) : fd(fd.fd) { fd.fd = -1; }
+  OwnedFd(OwnedFd &&fd) noexcept;
 
-  ~OwnedFd() noexcept {
-    if (fd < 0)
-      return;
+  OwnedFd &operator=(const OwnedFd &) = delete;
+  OwnedFd &operator=(OwnedFd &&) = delete;
 
-    // TODO: move this out of here...
-    if (close(fd) < 0)
-      std::cerr << strerror(errno) << std::endl;
-  }
+  ~OwnedFd() noexcept;
 
   int get_fd() const { return fd; }
 };
@@ -44,25 +33,7 @@ public:
   ReadEnd(OwnedFd &&fd);
 
   size_t read(void *buf, size_t n);
-
-  int get_fd() const { return fd.get_fd(); }
-
-  template <size_t N = _POSIX_PIPE_BUF>
-  void read_max_to_ostream(std::ostream &os) {
-    char buf[N];
-    size_t last = this->read(buf, N);
-    os.write(buf, last);
-  }
-
-  void read_to_ostream(std::ostream &os, size_t n) {
-    char buf[_POSIX_PIPE_BUF];
-    size_t read = 0;
-    while (read < n) {
-      size_t last = this->read(buf, _POSIX_PIPE_BUF);
-      os.write(buf, last);
-      read += last;
-    }
-  }
+  void read_to_ostream(std::ostream &os, size_t n);
 
   template <typename T> void read_all(T &t) {
     size_t read = 0;
@@ -71,6 +42,8 @@ public:
     while (read < sizeof(T))
       read += this->read(reinterpret_cast<char *>(&t) + read, sizeof(T) - read);
   }
+
+  int get_fd() const { return fd.get_fd(); }
 };
 
 class WriteEnd {
@@ -80,7 +53,6 @@ public:
   WriteEnd(OwnedFd &&fd);
 
   size_t write(const void *buf, size_t n);
-  int get_fd() const { return fd.get_fd(); }
 
   template <typename T> void write_all(const T &t) {
     size_t written = 0;
@@ -90,6 +62,8 @@ public:
       written += this->write(reinterpret_cast<const char *>(&t) + written,
                              sizeof(T) - written);
   }
+
+  int get_fd() const { return fd.get_fd(); }
 };
 
 class Pipe {

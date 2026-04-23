@@ -12,6 +12,22 @@
 
 using namespace psx;
 
+OwnedFd::OwnedFd(int fd) : fd(fd) {
+  if (fd < 0)
+    throw psx::ErrnoException("invalid file descriptor");
+}
+
+OwnedFd::OwnedFd(OwnedFd &&fd) noexcept : fd(fd.fd) { fd.fd = -1; }
+
+OwnedFd::~OwnedFd() noexcept {
+  if (fd < 0)
+    return;
+
+  // TODO: move this out of here...
+  if (close(fd) < 0)
+    std::cerr << strerror(errno) << std::endl;
+}
+
 ReadEnd::ReadEnd(OwnedFd &&fd) : fd(std::move(fd)) {}
 
 size_t ReadEnd::read(void *buf, size_t n) {
@@ -23,6 +39,16 @@ size_t ReadEnd::read(void *buf, size_t n) {
     throw EofException();
 
   return res;
+}
+
+void ReadEnd::read_to_ostream(std::ostream &os, size_t n) {
+  char buf[_POSIX_PIPE_BUF];
+  size_t read = 0;
+  while (read < n) {
+    size_t last = this->read(buf, _POSIX_PIPE_BUF);
+    os.write(buf, last);
+    read += last;
+  }
 }
 
 WriteEnd::WriteEnd(OwnedFd &&fd) : fd(std::move(fd)) {}
@@ -245,7 +271,8 @@ Process::~Process() noexcept {
     // that process as an example to others to never mess with our timing
     alarm(1);
 
-    // we need weak as it can be interrupted by signals (which is exactly what we want
+    // we need weak as it can be interrupted by signals (which is exactly what
+    // we want
     int exit = wait_weak();
     std::cerr << "INFO: process with PID " << pid
               << " has been forcibly terminated. Exit code: "

@@ -14,8 +14,6 @@ template <int sig> struct Signal {};
 
 template <int sig>
 class OnSignal : public psx::Async<Signal<sig>, OnSignal<sig>> {
-  // FIXME: This currently broadcasts signals to all pools which is NOT what we
-  // want
   psx::ReadEnd &r;
 
 public:
@@ -44,18 +42,7 @@ class SignalScope {
   static constexpr const int N_SIGS = 64;
   static std::array<std::atomic<int>, N_SIGS> fds;
 
-  static void handle_signal(int sig, siginfo_t *, void *) {
-    int saved = errno;
-
-    int fd = fds[sig].load(std::memory_order_acquire);
-
-    if (fd >= 0) {
-      ssize_t res = ::write(fd, "\n", 1);
-      (void)res;
-    }
-
-    errno = saved;
-  }
+  static void handle_signal(int sig, siginfo_t *, void *);
 
   std::array<std::optional<psx::ReadEnd>, N_SIGS> read_ends;
   std::array<std::optional<psx::WriteEnd>, N_SIGS> write_ends;
@@ -63,6 +50,11 @@ class SignalScope {
 
 public:
   SignalScope() {}
+  SignalScope(const SignalScope &) = delete;
+  SignalScope(SignalScope &&) = delete;
+
+  SignalScope &operator=(const SignalScope &) = delete;
+  SignalScope &operator=(SignalScope &&) = delete;
 
   template <int sig> OnSignal<sig> on_signal() {
     if (read_ends[sig])
@@ -93,17 +85,6 @@ public:
     return on_signal<sig>();
   }
 
-  ~SignalScope() noexcept {
-    for (size_t i = 0; i < olds.size(); i++) {
-      std::optional<struct sigaction> old = std::nullopt;
-      olds[i].swap(old);
-
-      if (!old)
-        continue;
-
-      sigaction(static_cast<int>(i), &*old, nullptr);
-      fds[i].store(-1, std::memory_order_release);
-    }
-  }
+  ~SignalScope() noexcept;
 };
 } // namespace jms::signals
