@@ -358,8 +358,8 @@ struct StatusAfter : public jms::JobIdCommand<PoolExecutor> {
   JobId start;
 
   explicit StatusAfter(PeekableStream &peek)
-      : jms::JobIdCommand<PoolExecutor>(command::pool::mnem::STATUS_AFTER, peek) {
-  }
+      : jms::JobIdCommand<PoolExecutor>(command::pool::mnem::STATUS_AFTER,
+                                        peek) {}
 
   psx::Dynamic<std::string> execute(PoolExecutor &ex) {
     std::ostringstream os{};
