@@ -81,7 +81,16 @@ template <typename Exec, typename A, typename... Rest>
 std::unique_ptr<jms::Command<Exec>> parse_command(PeekableStream peek) {
   try {
     PeekableStream p(peek);
-    return std::make_unique<A>(peek);
+    auto res = std::make_unique<A>(peek);
+
+    std::string s;
+    p.stream() >> s;
+
+    if (!s.empty())
+      throw error::CommandParseError(
+          sutil::concat("too many arguments where provided:", s));
+
+    return std::move(res);
   } catch (const error::NextCommand &) {
     return parse_command<Exec, Rest...>(peek);
   }
@@ -90,7 +99,6 @@ std::unique_ptr<jms::Command<Exec>> parse_command(PeekableStream peek) {
 template <typename Exec, typename... Commands>
 std::unique_ptr<jms::Command<Exec>> parse_command(std::string cmd) {
   std::istringstream is(std::move(cmd));
-
   return parse_command<Exec, Commands...>(PeekableStream(is));
 }
 } // namespace jms

@@ -67,7 +67,13 @@ void handle_connection(jms::signals::SignalScope &scope, CoordExecutor &ex,
     } catch (command::coord::ShutdownException &e) {
       psx::await(WriteString(sutil::concat("Served", e.n_finished, "jobs.",
                                            e.n_active, "were still active"),
-                             w));
+                             w)
+                     .except<psx::PosixException>([](const auto &) {
+                       std::cout
+                           << "WARN: could not report shutdown info to client"
+                           << std::endl;
+                       return std::monostate{};
+                     }));
 
       throw e;
     }

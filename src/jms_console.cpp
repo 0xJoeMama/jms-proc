@@ -46,7 +46,11 @@ void handle_command(psx::DuplexConnection &conn, const std::string &op) {
 }
 
 std::ostream &print_prompt(size_t &line) {
-  return std::cout << line++ << ": jms_console > ";
+  if (isatty(STDOUT_FILENO)) {
+    return std::cout << line++ << ": jms_console > ";
+  } else {
+    return std::cout;
+  }
 }
 
 void send_operations(std::string &path, psx::DuplexConnection &conn,

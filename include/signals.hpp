@@ -44,15 +44,15 @@ class SignalScope {
   static constexpr const int N_SIGS = 64;
   static std::array<std::atomic<int>, N_SIGS> fds;
 
-  // TODO: this currently may have race conditions due to use of std::optional
-  // in write_ends
   static void handle_signal(int sig, siginfo_t *, void *) {
     int saved = errno;
 
     int fd = fds[sig].load(std::memory_order_acquire);
 
-    if (fd >= 0)
-      ::write(fd, "\n", 1);
+    if (fd >= 0) {
+      ssize_t res = ::write(fd, "\n", 1);
+      (void)res;
+    }
 
     errno = saved;
   }

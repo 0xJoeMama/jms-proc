@@ -29,6 +29,40 @@ psx::Dynamic<std::string> ShowActive::execute(CoordExecutor &ex) {
   });
 }
 
+namespace {
+void imitate_pool_response(CoordExecutor &ex, PoolId id,
+                       std::function<void(JobId)> f) {
+  for (JobId j = id * ex.get_pool_size(); (id + 1) * j < ex.get_pool_size();
+       j++)
+    f(j);
+}
+
+auto fake_job(std::ostream &os) {
+  return [&](JobId id) { os << "JobID " << id << std::endl; };
+}
+
+auto fake_job_status(std::ostream &os, ProcStatus status) {
+  return [&os, status](JobId id) {
+    os << "JobID " << id << " Status: ";
+    switch (status) {
+    case ProcStatus::Finished:
+      os << "Finished";
+      break;
+    case ProcStatus::Active:
+      os << "Active";
+      break;
+    case ProcStatus::Suspended:
+      os << "Suspended";
+      break;
+    default:
+      todo("unknown job status");
+    }
+
+    os << std::endl;
+  };
+}
+} // namespace
+
 psx::Dynamic<std::string> ShowFinished::execute(CoordExecutor &ex) {
   psx::Join<std::string> active;
 
@@ -39,23 +73,17 @@ psx::Dynamic<std::string> ShowFinished::execute(CoordExecutor &ex) {
       // not in the map, so the pool is already finished
       std::ostringstream os{};
 
-      for (JobId j = i * ex.get_pool_size(); j < ex.get_pool_size(); j++)
-        os << "JobID " << i << std::endl;
-
+      imitate_pool_response(ex, i, fake_job(os));
       active.push(psx::Completed(os.str()));
     } else {
       // send message to all pools
       active.push(
           jms::send_command(iter->second.get_conn(), pool::mnem::SHOW_FINISHED)
-              .except<psx::PosixException>(
-                  [pool_id = i, jobs_per_pool = ex.get_pool_size()](auto) {
-                    std::ostringstream os{};
-                    for (JobId i = pool_id * jobs_per_pool;
-                         i < (pool_id + 1) * jobs_per_pool; i++)
-                      os << "JobID " << i << std::endl;
-
-                    return os.str();
-                  }));
+              .except<psx::PosixException>([pool_id = i, &ex](auto) {
+                std::ostringstream os{};
+                imitate_pool_response(ex, pool_id, fake_job(os));
+                return os.str();
+              }));
     }
   }
 
@@ -191,20 +219,18 @@ psx::Dynamic<std::string> StatusAll::execute(CoordExecutor &ex) {
     if (it != ex.get_pools().end()) {
       pool_responses.push(
           jms::send_command(it->second.get_conn(), coord::mnem::STATUS_ALL)
-              .except<psx::PosixException>(
-                  [pool_id = id, jobs_per_pool = ex.get_pool_size()](auto) {
-                    std::ostringstream os{};
-                    for (JobId i = pool_id * jobs_per_pool;
-                         i < (pool_id + 1) * jobs_per_pool; i++)
-                      os << "JobID " << i << " Status: Finished" << std::endl;
-
-                    return os.str();
-                  }));
+              .except<psx::PosixException>([&ex, pool_id = id,
+                                            jobs_per_pool =
+                                                ex.get_pool_size()](auto) {
+                std::ostringstream os{};
+                imitate_pool_response(ex, pool_id,
+                                  fake_job_status(os, ProcStatus::Finished));
+                return os.str();
+              }));
     } else {
-      for (JobId jid = id * ex.get_pool_size();
-           jid < (id + 1) * ex.get_pool_size(); jid++)
-        pool_responses.push(
-            psx::Completed(sutil::concat("JobID", jid, "Status: Finished\n")));
+      std::ostringstream os{};
+      imitate_pool_response(ex, id, fake_job_status(os, ProcStatus::Finished));
+      pool_responses.push(psx::Completed(os.str()));
     }
   }
 

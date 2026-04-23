@@ -124,7 +124,7 @@ class PoolExecutor {
   size_t njobs;
   std::map<JobId, JobHandle> children;
   std::map<pid_t, JobHandle *> by_pid;
-  std::set<JobId> finished;
+  std::map<JobId, chr::time_point<chr::system_clock>> finished;
 
   psx::DuplexConnection conn;
 
@@ -171,7 +171,10 @@ public:
                   << " and PID " << si.si_pid << " had exited with exit code "
                   << WEXITSTATUS(*exit) << std::endl;
 
-        finished.insert(node.mapped().get_job_id());
+        finished.insert({
+            node.mapped().get_job_id(),
+            node.mapped().get_last_start(),
+        });
         continue;
       } break;
 
@@ -228,7 +231,7 @@ public:
   }
 
   std::map<JobId, JobHandle> &get_children() { return children; }
-  const std::set<JobId> &get_finished() const { return finished; }
+  const auto &get_finished() const { return finished; }
   psx::DuplexConnection &get_conn() { return conn; }
 
   bool should_continue() const { return !done; }
@@ -322,7 +325,7 @@ struct ShowFinished : jms::Command<PoolExecutor> {
   psx::Dynamic<std::string> execute(PoolExecutor &ex) override {
     std::ostringstream os{};
 
-    for (const auto &id : ex.get_finished())
+    for (const auto &[id, _] : ex.get_finished())
       os << "JobID " << id << std::endl;
 
     return psx::Completed<std::string>(os.str());
@@ -373,7 +376,7 @@ struct StatusAll : public jms::Command<PoolExecutor> {
       os << handle << std::endl;
     }
 
-    for (const auto job_id : ex.get_finished())
+    for (const auto &[job_id, _] : ex.get_finished())
       os << "JobID " << job_id << " Status: Finished" << std::endl;
 
     return psx::Completed<std::string>(os.str());

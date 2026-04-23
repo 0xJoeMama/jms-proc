@@ -61,11 +61,16 @@ public:
   }
 };
 
+// namespace chr = std::chrono;
+// using Timepoint = chr::time_point<chr::system_clock>;
+
 class CoordExecutor {
   const size_t jobs_per_pool;
   store::FileStore &store;
   std::map<PoolId, PoolHandle> pools;
   std::map<pid_t, PoolHandle *> by_pid;
+
+  // std::map<JobId, Timepoint> submission_times;
   PoolHandle *last_pool;
 
   JobId next_job;
