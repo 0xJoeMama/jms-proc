@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <sys/wait.h>
 
 #include "args.hpp"
@@ -61,8 +62,8 @@ public:
   }
 };
 
-// namespace chr = std::chrono;
-// using Timepoint = chr::time_point<chr::system_clock>;
+namespace chr = std::chrono;
+using Timepoint = chr::time_point<chr::system_clock>;
 
 class CoordExecutor {
   const size_t jobs_per_pool;
@@ -70,7 +71,7 @@ class CoordExecutor {
   std::map<PoolId, PoolHandle> pools;
   std::map<pid_t, PoolHandle *> by_pid;
 
-  // std::map<JobId, Timepoint> submission_times;
+  std::multimap<Timepoint, JobId> submission_times;
   PoolHandle *last_pool;
 
   JobId next_job;
@@ -86,6 +87,7 @@ public:
   PoolId get_next_pool() const { return next_pool; }
   size_t get_pool_size() const { return jobs_per_pool; }
   size_t get_total_jobs() const { return next_job; }
+  const auto &get_submission_times() const { return submission_times; }
 
   PoolHandle *pool_for_job(JobId id);
 
@@ -245,15 +247,15 @@ struct Status : public jms::JobIdCommand<CoordExecutor> {
 };
 
 struct StatusAll : public jms::Command<CoordExecutor> {
-  std::optional<size_t> n;
+  Timepoint since;
 
   explicit StatusAll(PeekableStream &peek)
       : jms::Command<CoordExecutor>(mnem::STATUS_ALL, peek) {
     size_t n;
     if (peek.stream() >> n) {
-      this->n = n;
+      since = chr::system_clock::now() - chr::seconds(n);
     } else {
-      this->n = std::nullopt;
+      since = Timepoint::min();
     }
   }
 

@@ -34,7 +34,7 @@ constexpr const char *RESUME = "resume";
 namespace pool::mnem {
 constexpr const char *SUBMIT = "submit";
 constexpr const char *STATUS = "status";
-constexpr const char *STATUS_ALL = "status-all";
+constexpr const char *STATUS_AFTER = "status-after";
 constexpr const char *SHOW_ACTIVE = "show-active";
 constexpr const char *SHOW_FINISHED = "show-finished";
 constexpr const char *SUSPEND = "suspend";

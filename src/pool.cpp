@@ -354,30 +354,23 @@ struct Status : JobIdCommand<PoolExecutor> {
   }
 };
 
-struct StatusAll : public jms::Command<PoolExecutor> {
-  std::optional<chr::time_point<chr::system_clock>> since;
+struct StatusAfter : public jms::JobIdCommand<PoolExecutor> {
+  JobId start;
 
-  explicit StatusAll(PeekableStream &peek)
-      : jms::Command<PoolExecutor>(command::pool::mnem::STATUS_ALL, peek) {
-    size_t n;
-    if (peek.stream() >> n) {
-      since = chr::system_clock::now() - chr::seconds(n);
-    } else {
-      since = std::nullopt;
-    }
+  explicit StatusAfter(PeekableStream &peek)
+      : jms::JobIdCommand<PoolExecutor>(command::pool::mnem::STATUS_AFTER, peek) {
   }
 
   psx::Dynamic<std::string> execute(PoolExecutor &ex) {
     std::ostringstream os{};
-    for (const auto &[job_id, handle] : ex.get_children()) {
-      if (since && handle.get_last_start() < *since)
-        continue;
 
-      os << handle << std::endl;
-    }
+    const auto &children = ex.get_children();
+    for (auto it = children.lower_bound(job_id); it != children.cend(); it++)
+      os << it->second << std::endl;
 
-    for (const auto &[job_id, _] : ex.get_finished())
-      os << "JobID " << job_id << " Status: Finished" << std::endl;
+    const auto &finished = ex.get_finished();
+    for (auto it = finished.lower_bound(job_id); it != finished.cend(); it++)
+      os << "JobID " << it->first << " Status: Finished" << std::endl;
 
     return psx::Completed<std::string>(os.str());
   }
@@ -403,7 +396,7 @@ int pool_main(PoolId id, size_t njobs, const store::FileStore &root_store,
                 auto cmd =
                     jms::parse_command<PoolExecutor, Submit, Resume, Suspend,
                                        ProcCount, ShowActive, ShowFinished,
-                                       Status, StatusAll>(std::move(cmdstr));
+                                       Status, StatusAfter>(std::move(cmdstr));
 
                 psx::await(cmd->execute(ex).then([&w = w](auto &&res) {
                   return WriteString(std::move(res), w);

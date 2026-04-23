@@ -1,6 +1,7 @@
 #include "jms_coord.hpp"
 #include "pipe.hpp"
 #include "poll.hpp"
+#include <chrono>
 
 using namespace jms;
 
@@ -61,6 +62,8 @@ PoolHandle &CoordExecutor::new_pool() {
 psx::Dynamic<std::pair<JobId, pid_t>>
 CoordExecutor::spawn_on_last_pool(JobId job_id, std::string path,
                                   std::vector<std::string> args) {
+  submission_times.emplace(chr::system_clock::now(), job_id);
+
   return jms::send_command(
              last_pool->get_conn(),
              sutil::concat("submit", job_id, path, sutil::concat_iter(args)))
