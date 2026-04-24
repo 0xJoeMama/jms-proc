@@ -65,7 +65,7 @@ do
       i=$((i + 1))
       ;;
     * )
-      echo "Unknown flag ${!i}"
+      echo "Unknown flag ${!i}" 2>&1
       print_usage
       ;;
   esac
@@ -107,5 +107,9 @@ case "$cmd" in
     ;;
   "purge" )
     find_outputs "$path" | xargs -r -0 rm -r
+    ;;
+  *)
+    echo "Unknown command $cmd. Must be one of 'list', 'size', 'purge'" 2>&1
+    exit 2
     ;;
 esac
