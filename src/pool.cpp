@@ -370,6 +370,13 @@ struct StatusAfter : public jms::JobIdCommand<PoolExecutor> {
 namespace jms {
 int pool_main(PoolId id, size_t njobs, const store::FileStore &root_store,
               psx::DuplexConnection &conn) {
+  { // close all open file descriptors except stdin-out-err and our connection
+    for (int i = STDERR_FILENO + 1;; i++)
+      if (i != conn.r.get_fd() && i != conn.w.get_fd())
+        if (close(i) < 0 && errno == EBADF)
+          break;
+  }
+
   signals::SignalScope scope;
   PoolExecutor ex(id, root_store, njobs, std::move(conn));
 
