@@ -90,7 +90,7 @@ std::unique_ptr<jms::Command<Exec>> parse_command(PeekableStream peek) {
       throw error::CommandParseError(
           sutil::concat("too many arguments where provided:", s));
 
-    return std::move(res);
+    return res;
   } catch (const error::NextCommand &) {
     return parse_command<Exec, Rest...>(peek);
   }
