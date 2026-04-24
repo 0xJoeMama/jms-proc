@@ -52,12 +52,21 @@ do
       if [ "$cmd" = "size" ] && [ $((next + 1)) -le "$#" ]
       then
         idx=$((next + 1))
-        cmd_arg=${!idx}
+        n=${!idx}
 
-        i=$((i + 1))
+        # Check if it's a number
+        if [[ "$n" =~ ^[0-9]+$ ]]
+        then
+          cmd_arg=$n
+          i=$((i + 1))
+        fi
       fi
 
       i=$((i + 1))
+      ;;
+    * )
+      echo "Unknown flag ${!i}"
+      print_usage
       ;;
   esac
 
@@ -77,15 +86,17 @@ then
 fi
 
 find_outputs() {
-  find "$1" -name "outputs_*"
+  find "$1" -maxdepth 1 -mindepth 1 -type d -name 'outputs_*' -print0
 }
 
 case "$cmd" in
   "list" )
-    find_outputs "$path"
+    find_outputs "$path" | tr '\0' '\n'
     ;;
   "size" )
-    result=$(find_outputs "$path" | xargs du -sb | sort -n)
+    result=$(find_outputs "$path" | xargs -r -0 du -sb | sort -n )
+    # | cut -f 2 -s optionally add this to the above command to remove the size number
+    # I kept them in because they are helpful
 
     if [ -n "$cmd_arg" ]
     then
@@ -95,6 +106,6 @@ case "$cmd" in
     echo "$result"
     ;;
   "purge" )
-    find_outputs "$path" | xargs rm -r
+    find_outputs "$path" | xargs -r -0 rm -r
     ;;
 esac
