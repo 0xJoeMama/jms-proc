@@ -273,17 +273,14 @@ Process::~Process() noexcept {
 
     // we need weak as it can be interrupted by signals (which is exactly what
     // we want
-    int exit = wait_weak();
-    std::cerr << "INFO: process with PID " << pid
-              << " has been forcibly terminated. Exit code: "
-              << WEXITSTATUS(exit) << std::endl;
+    wait_weak();
   } catch (const ErrnoException &e) {
-    std::cerr << "WARN: " << e.what() << std::endl;
+    std::cerr << "WARN: failed to wait for child process: " << e.what() << std::endl;
     // lets actually not be kind
     signal(SIGKILL);
 
     wait();
-    std::cout << "INFO: process with PID " << pid
+    std::cerr << "WARN: process with PID " << pid
               << " has been forcibly killed." << std::endl;
   }
 

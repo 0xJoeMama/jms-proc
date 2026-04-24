@@ -119,7 +119,7 @@ std::ostream &operator<<(std::ostream &os, const JobHandle &job) {
 }
 
 class PoolExecutor {
-  PoolId id;
+  // PoolId id;
   const store::FileStore &root_store;
   size_t njobs;
   std::map<JobId, JobHandle> children;
@@ -131,15 +131,14 @@ class PoolExecutor {
   bool done;
 
 public:
-  PoolExecutor(PoolId id, const store::FileStore &root_store, size_t njobs,
-               psx::DuplexConnection conn)
-      : id(id), root_store(root_store), njobs(njobs), conn(std::move(conn)),
-        done(false) {}
+  PoolExecutor(PoolId /* id */, const store::FileStore &root_store,
+               size_t njobs, psx::DuplexConnection conn)
+      : /* id(id), */ root_store(root_store), njobs(njobs),
+        conn(std::move(conn)), done(false) {}
 
   size_t total_procs() const { return children.size() + finished.size(); }
 
   void receive_sigterm() {
-    std::cerr << "INFO: got SIGTERM, shutting down..." << std::endl;
     size_t active = children.size();
 
     children.clear();
@@ -166,10 +165,7 @@ public:
         auto iter = by_pid.extract(si.si_pid);
         auto node = children.extract(iter.mapped()->get_job_id());
 
-        auto exit = node.mapped().get_proc().wait_no_block();
-        std::cout << "INFO: job with id " << node.mapped().get_job_id()
-                  << " and PID " << si.si_pid << " had exited with exit code "
-                  << WEXITSTATUS(*exit) << std::endl;
+        node.mapped().get_proc().wait_no_block();
 
         finished.insert({
             node.mapped().get_job_id(),
@@ -190,12 +186,9 @@ public:
       auto &handle = children.at(iter->get_job_id());
       handle.set_status(new_status);
 
-      std::cout << "INFO: job with id " << handle.get_job_id() << " and PID "
-                << si.si_pid << " has changed status to " << new_status
-                << std::endl;
-
       int res;
-      while ((res = waitid(P_PID, si.si_pid, nullptr,
+      siginfo_t si_inner;
+      while ((res = waitid(P_PID, si.si_pid, &si_inner,
                            WNOHANG | WCONTINUED | WSTOPPED)) < 0 &&
              errno == EINTR)
         ;
@@ -209,11 +202,7 @@ public:
       std::cerr << "WARN: failed to wait on updated job: " << strerror(errno)
                 << std::endl;
 
-    if (finished.size() == njobs) {
-      std::cout << "INFO: pool " << id << " has served finished its jobs"
-                << std::endl;
-      done = true;
-    }
+    done = finished.size() == njobs;
   }
 
   std::optional<pid_t> new_job(JobId job_id, std::string path,
@@ -414,7 +403,6 @@ int pool_main(PoolId id, size_t njobs, const store::FileStore &root_store,
         psx::await(std::move(async)));
   }
 
-  std::cout << "INFO: job pool " << id << " is now exiting" << std::endl;
   return 0;
 }
 } // namespace jms

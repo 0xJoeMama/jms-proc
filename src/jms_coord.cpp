@@ -59,7 +59,6 @@ void handle_connection(jms::signals::SignalScope &scope, CoordExecutor &ex,
                               [](auto) {}},
                         std::move(result));
     } catch (const psx::EofException &e) {
-      std::cout << "Client disconnected: " << e.what() << std::endl;
       break;
     } catch (const psx::ErrnoException &e) {
       std::cerr << "ERROR: could not handle client: " << e.what() << std::endl;
@@ -69,7 +68,7 @@ void handle_connection(jms::signals::SignalScope &scope, CoordExecutor &ex,
                                            e.n_active, "were still active"),
                              w)
                      .except<psx::PosixException>([](const auto &) {
-                       std::cout
+                       std::cerr
                            << "WARN: could not report shutdown info to client"
                            << std::endl;
                        return std::monostate{};
