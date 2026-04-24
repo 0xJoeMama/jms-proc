@@ -9,17 +9,13 @@
 namespace store {
 class Dir {
   std::string root;
-  DIR *dir;
 
 public:
   Dir(std::string_view root, bool delete_if_exists = false);
   Dir(const Dir &) = delete;
-  ~Dir() noexcept;
 
   Dir &operator=(const Dir &) = delete;
   const std::string &get_root_path() const { return root; }
-
-  int get_dirfd() const { return dirfd(dir); }
 };
 
 class FileStore {

@@ -73,10 +73,10 @@ DIR *mk_open_dir(const char *path) {
 
 Dir::Dir(std::string_view root, bool delete_if_exists) : root(root) {
   try {
-    dir = mk_open_dir(this->root.c_str());
+    mk_open_dir(this->root.c_str());
   } catch (const AlreadyThere &) {
     if (!delete_if_exists) {
-      dir = opendir(this->root.c_str());
+      DIR *dir = opendir(this->root.c_str());
       if (!dir)
         throw psx::ErrnoException(
             sutil::concat("failed to open directory:", root));
@@ -126,13 +126,8 @@ Dir::Dir(std::string_view root, bool delete_if_exists) : root(root) {
       };
     }
 
-    dir = mk_open_dir(this->root.c_str());
+    mk_open_dir(this->root.c_str());
   }
-}
-
-Dir::~Dir() noexcept {
-  if (closedir(dir) < 0)
-    std::cerr << strerror(errno) << std::endl;
 }
 
 FileStore::FileStore(bool delete_if_exists, std::string_view root_path)
