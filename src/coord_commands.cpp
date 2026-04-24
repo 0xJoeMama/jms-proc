@@ -16,7 +16,7 @@ psx::Dynamic<std::string> ShowActive::execute(CoordExecutor &ex) {
   for (auto &[_, pool] : ex.get_pools()) {
     // send message to all pools
     active.push(jms::send_command(pool.get_conn(), pool::mnem::SHOW_ACTIVE)
-                    .except<psx::PosixException>([](auto) { return "\n"; }));
+                    .except<psx::PosixException>([](auto) { return ""; }));
   }
 
   return active.map([](auto actives) {
@@ -33,7 +33,8 @@ psx::Dynamic<std::string> ShowActive::execute(CoordExecutor &ex) {
 namespace {
 void imitate_pool_response(CoordExecutor &ex, PoolId id,
                            std::function<void(JobId)> f) {
-  for (JobId j = id * ex.get_pool_size(); (id + 1) * j < ex.get_pool_size();
+  size_t njobs = ex.get_pool_size();
+  for (JobId j = id * njobs; j < (id + 1) * njobs && j < ex.get_total_jobs();
        j++)
     f(j);
 }
@@ -115,18 +116,17 @@ psx::Dynamic<std::string> Resume::execute(CoordExecutor &ex) {
 }
 
 psx::Dynamic<std::string> Suspend::execute(CoordExecutor &ex) {
-  PoolHandle *target_pool = ex.pool_for_job(job_id);
+  if (PoolHandle *target_pool = ex.pool_for_job(job_id)) {
+    return jms::send_command(target_pool->get_conn(),
+                             sutil::concat(pool::mnem::SUSPEND, job_id))
+        .except<psx::PosixException>([job_id = this->job_id](auto) {
+          return sutil::concat("Sent suspend signal to JobID", job_id);
+        });
+  }
 
   // if the pool does not exist, we just make a fake message
-  if (!target_pool)
-    return psx::Completed<std::string>(
-        sutil::concat("Sent suspend signal to JobID", job_id));
-
-  return jms::send_command(target_pool->get_conn(),
-                           sutil::concat(pool::mnem::SUSPEND, job_id))
-      .except<psx::PosixException>([job_id = this->job_id](auto) {
-        return sutil::concat("Sent suspend signal to JobID", job_id);
-      });
+  return psx::Completed<std::string>(
+      sutil::concat("Sent suspend signal to JobID", job_id));
 }
 
 psx::Dynamic<std::string> Submit::execute(CoordExecutor &ex) {
@@ -195,21 +195,29 @@ psx::Dynamic<std::string> ShowPools::execute(CoordExecutor &ex) {
   });
 }
 
+namespace {
+std::string fake_status_response(CoordExecutor &ex, JobId job_id) {
+  std::ostringstream os{};
+
+  if (job_id < ex.get_total_jobs())
+    fake_job_status(os, ProcStatus::Finished)(job_id);
+  else
+    os << "Job not submitted yet\n";
+
+  return os.str();
+}
+} // namespace
+
 psx::Dynamic<std::string> Status::execute(CoordExecutor &ex) {
-  PoolHandle *handle = ex.pool_for_job(job_id);
-  if (handle)
+  if (PoolHandle *handle = ex.pool_for_job(job_id)) {
     return jms::send_command(handle->get_conn(),
                              sutil::concat(pool::mnem::STATUS, job_id))
-        .except<psx::PosixException>([job_id = job_id](auto) {
-          return sutil::concat("JobID", job_id, "Status: Finished");
+        .except<psx::PosixException>([&ex, job_id = job_id](auto) {
+          return fake_status_response(ex, job_id);
         });
-
-  if (job_id / ex.get_pool_size() < ex.get_next_pool()) {
-    return psx::Completed<std::string>(
-        sutil::concat("JobID", job_id, "Status:", "Finished"));
-  } else {
-    return psx::Completed<std::string>("Job not submitted yet");
   }
+
+  return psx::Completed(fake_status_response(ex, job_id));
 }
 
 namespace {
@@ -234,9 +242,20 @@ psx::Dynamic<std::string> StatusAll::execute(CoordExecutor &ex) {
     const auto &[_, job_id] = *it;
 
     if (PoolHandle *pool = ex.pool_for_job(job_id)) {
-      advance_to_end_of_pool(ex, pool->pool_id(), it, subm);
-      pool_responses.push(jms::send_command(
-          pool->get_conn(), sutil::concat("status-after", job_id)));
+      PoolId pool_id = pool->pool_id();
+
+      advance_to_end_of_pool(ex, pool_id, it, subm);
+      pool_responses.push(
+          jms::send_command(pool->get_conn(),
+                            sutil::concat(pool::mnem::STATUS_AFTER, job_id))
+              .except<psx::PosixException>([&ex, pool_id](const auto &) {
+                std::ostringstream os{};
+
+                // this pool has already exited
+                imitate_pool_response(
+                    ex, pool_id, fake_job_status(os, ProcStatus::Finished));
+                return os.str();
+              }));
     } else {
       PoolId pool_id = job_id / ex.get_pool_size();
       std::ostringstream os{};

@@ -268,12 +268,12 @@ struct Suspend : JobIdCommand<PoolExecutor> {
 
     if (it == ex.get_children().end())
       return psx::Completed<std::string>(
-          "invalid job id or job already finished");
+          "invalid job id or job already finished\n");
 
     it->second.get_proc().signal(SIGSTOP);
 
     return psx::Completed<std::string>(
-        sutil::concat("Sent suspend signal to JobID", job_id));
+        sutil::concat("Sent suspend signal to JobID", job_id, "\n"));
   }
 };
 
@@ -285,11 +285,11 @@ struct Resume : JobIdCommand<PoolExecutor> {
 
     if (it == ex.get_children().end())
       return psx::Completed<std::string>(
-          "invalid job id or job already finished");
+          "invalid job id or job already finished\n");
 
     it->second.get_proc().signal(SIGCONT);
     return psx::Completed<std::string>(
-        sutil::concat("Sent resume signal to JobID", job_id));
+        sutil::concat("Sent resume signal to JobID", job_id, "\n"));
   }
 };
 
@@ -320,7 +320,7 @@ struct ShowActive : jms::Command<PoolExecutor> {
 
 struct ShowFinished : jms::Command<PoolExecutor> {
   ShowFinished(PeekableStream &peek)
-      : Command<PoolExecutor>("show-finished", peek) {}
+      : Command<PoolExecutor>(command::pool::mnem::SHOW_FINISHED, peek) {}
 
   psx::Dynamic<std::string> execute(PoolExecutor &ex) override {
     std::ostringstream os{};
@@ -342,14 +342,15 @@ struct Status : JobIdCommand<PoolExecutor> {
 
     if (it == ex.get_children().end()) {
       if (ex.get_finished().find(job_id) != ex.get_finished().end()) {
-        os << "JobID " << job_id << " Status: " << ProcStatus::Finished;
+        os << "JobID " << job_id << " Status: " << ProcStatus::Finished
+           << std::endl;
         return psx::Completed<std::string>(os.str());
       }
 
-      return psx::Completed<std::string>("Job not yet submitted");
+      return psx::Completed<std::string>("Job not yet submitted\n");
     }
 
-    os << it->second;
+    os << it->second << std::endl;
     return psx::Completed<std::string>(os.str());
   }
 };
